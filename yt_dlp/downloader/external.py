@@ -310,6 +310,7 @@ class Aria2cFD(ExternalFD):
             for key, val in info_dict['http_headers'].items():
                 cmd += ['--header', f'{key}: {val}']
         cmd += self._option('--max-overall-download-limit', 'ratelimit')
+        cmd += self._option('--lowest-speed-limit', 'throttledratelimit')
         cmd += self._option('--interface', 'source_address')
         cmd += self._option('--all-proxy', 'proxy')
         cmd += self._bool_option('--check-certificate', 'nocheckcertificate', 'false', 'true', '=')
