@@ -18,6 +18,7 @@ from ..utils import (
     orderedSet,
     prepend_extension,
     shell_quote,
+    variadic,
 )
 
 _TINY_CHAPTER_DURATION = 1
