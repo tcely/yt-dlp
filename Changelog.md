@@ -4,6 +4,39 @@
 # To create a release, dispatch the https://github.com/yt-dlp/yt-dlp/actions/workflows/release.yml workflow on master
 -->
 
+### 2025.02.08.224548
+
+#### Core changes
+- [Fix --no-plugins --plugin-dirs '/path' importing from pythonpath](https://github.com/yt-dlp/yt-dlp/commit/a6979c7ba759d7f5e0dcfcca6eb6b75ead4e9ebe) by [pukkandan](https://github.com/pukkandan)
+- [Get tests working](https://github.com/yt-dlp/yt-dlp/commit/74050a8dff263f5fc2cb810878d358aece0ac71b) by [pukkandan](https://github.com/pukkandan)
+- [Merge remote-tracking branch 'upstream/master' into misc/globals-and-plugins-revive](https://github.com/yt-dlp/yt-dlp/commit/1883400bcccd0ea910e032bafe349bb05cf0cd1d) by [pukkandan](https://github.com/pukkandan)
+- [Rename --no-plugins to --no-plugin-dirs](https://github.com/yt-dlp/yt-dlp/commit/b6c3d22decc56b8484de0435aa52948d6a59b217) by [pukkandan](https://github.com/pukkandan)
+- [Update README.md](https://github.com/yt-dlp/yt-dlp/commit/243174bd53482246bbdfa47e6e4d1c1efd7b9a11) by [pukkandan](https://github.com/pukkandan)
+- [Update README.md](https://github.com/yt-dlp/yt-dlp/commit/f14e168b7e1078328b73fa665286854577dac3d0) by [pukkandan](https://github.com/pukkandan)
+- [Update README.md](https://github.com/yt-dlp/yt-dlp/commit/eb6cba8eb933caf6ea7179dec047fa149507071d) by [pukkandan](https://github.com/pukkandan)
+- [Update yt_dlp/__init__.py](https://github.com/yt-dlp/yt-dlp/commit/8a585c0fc6886f07b26ca5aa305ca724712d2c25) by [pukkandan](https://github.com/pukkandan)
+- [Update yt_dlp/extractor/extractors.py](https://github.com/yt-dlp/yt-dlp/commit/a0366608836156d3455eb1dabc533126eea88d8a) by [pukkandan](https://github.com/pukkandan)
+- [Update yt_dlp/globals.py](https://github.com/yt-dlp/yt-dlp/commit/afbbb360bba1fced1ffb8da40913e882fe017119) by [pukkandan](https://github.com/pukkandan)
+- [Update yt_dlp/options.py](https://github.com/yt-dlp/yt-dlp/commit/b5b83340c5277eb7fec75eb841e9e49c7c1e2588) by [pukkandan](https://github.com/pukkandan)
+- [Update yt_dlp/options.py](https://github.com/yt-dlp/yt-dlp/commit/78bc4e703d7ceac827c7265fc855b00f9d9856c6) by [pukkandan](https://github.com/pukkandan)
+- [Update yt_dlp/plugins.py](https://github.com/yt-dlp/yt-dlp/commit/a290aa0107bb54f6a88794ff022a08691cceea45) by [pukkandan](https://github.com/pukkandan)
+- [Update yt_dlp/plugins.py](https://github.com/yt-dlp/yt-dlp/commit/b738e600023dbebcb6f9d3c7f77ded37db3ced31) by [pukkandan](https://github.com/pukkandan)
+- [cleanup from review](https://github.com/yt-dlp/yt-dlp/commit/e2883ffb4cf0f37f311a0f3b74e28144e83ed234) by [pukkandan](https://github.com/pukkandan)
+- [ruff](https://github.com/yt-dlp/yt-dlp/commit/317e7a4c9b9b4ccaaface320304304c3b6a3a52e) by [pukkandan](https://github.com/pukkandan)
+- [set plugin_dirs to empty to disable plugins](https://github.com/yt-dlp/yt-dlp/commit/0e825cd336f86060c5245d2720cacf1b378a1232) by [pukkandan](https://github.com/pukkandan)
+- [some more refactoring](https://github.com/yt-dlp/yt-dlp/commit/93aa21b3b2891c33032d7dcc278e072d2efebead) by [pukkandan](https://github.com/pukkandan)
+
+#### Extractor changes
+- **acast**: [Support shows.acast.com URLs](https://github.com/yt-dlp/yt-dlp/commit/57c717fee4bfbc9309845bbb48901b72e4b69304) ([#12223](https://github.com/yt-dlp/yt-dlp/issues/12223)) by [barsnick](https://github.com/barsnick)
+- **cwtv**
+    - [Fix extractor](https://github.com/yt-dlp/yt-dlp/commit/18a28514e306e822eab4f3a79c76d515bf076406) ([#12207](https://github.com/yt-dlp/yt-dlp/issues/12207)) by [arantius](https://github.com/arantius)
+    - movie: [Add extractor](https://github.com/yt-dlp/yt-dlp/commit/03c3d705778c07739e0034b51490877cffdc0983) ([#12227](https://github.com/yt-dlp/yt-dlp/issues/12227)) by [bashonly](https://github.com/bashonly)
+- **dropbox**: [Fix extraction](https://github.com/yt-dlp/yt-dlp/commit/861aeec449c8f3c062d962945b234ff0341f61f3) ([#12228](https://github.com/yt-dlp/yt-dlp/issues/12228)) by [bashonly](https://github.com/bashonly)
+- **francetv**: site: [Fix extractor](https://github.com/yt-dlp/yt-dlp/commit/817483ccc68aed6049ed9c4a2ffae44ca82d2b1c) ([#12236](https://github.com/yt-dlp/yt-dlp/issues/12236)) by [bashonly](https://github.com/bashonly)
+- **globo**: [Fix extractor](https://github.com/yt-dlp/yt-dlp/commit/f8d0161455f00add65585ca1a476a7b5d56f5f96) ([#11795](https://github.com/yt-dlp/yt-dlp/issues/11795)) by [slipinthedove](https://github.com/slipinthedove), [YoshiTabletopGamer](https://github.com/YoshiTabletopGamer)
+- **goplay**: [Fix extractor](https://github.com/yt-dlp/yt-dlp/commit/d59f14a0a7a8b55e6bf468237def62b73ab4a517) ([#12237](https://github.com/yt-dlp/yt-dlp/issues/12237)) by [alard](https://github.com/alard)
+- **pbs**: [Support www.thirteen.org URLs](https://github.com/yt-dlp/yt-dlp/commit/9fb8ab2ff67fb699f60cce09163a580976e90c0e) ([#11191](https://github.com/yt-dlp/yt-dlp/issues/11191)) by [rohieb](https://github.com/rohieb)
+
 ### 2025.01.26
 
 #### Core changes
