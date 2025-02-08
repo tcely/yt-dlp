@@ -8,9 +8,10 @@ from .ffmpeg import FFmpegPostProcessor, FFmpegSubtitlesConvertorPP
 from .sponsorblock import SponsorBlockPP
 from ..utils import (
     PostProcessingError,
+    encodeArgument,
     orderedSet,
     prepend_extension,
-    encodeArgument,
+    shell_quote,
 )
 
 _TINY_CHAPTER_DURATION = 1
