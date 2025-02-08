@@ -8,6 +8,7 @@ from .common import PostProcessor
 from .ffmpeg import FFmpegPostProcessor, FFmpegSubtitlesConvertorPP
 from .sponsorblock import SponsorBlockPP
 from ..utils import (
+    Popen,
     PostProcessingError,
     encodeArgument,
     orderedSet,
