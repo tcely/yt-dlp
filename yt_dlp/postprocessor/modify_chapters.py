@@ -2,6 +2,7 @@ import copy
 import heapq
 import itertools
 import os
+import subprocess
 
 from .common import PostProcessor
 from .ffmpeg import FFmpegPostProcessor, FFmpegSubtitlesConvertorPP
