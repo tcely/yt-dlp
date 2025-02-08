@@ -1,5 +1,6 @@
 import copy
 import heapq
+import itertools
 import os
 
 from .common import PostProcessor
