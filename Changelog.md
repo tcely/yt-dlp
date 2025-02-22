@@ -4,6 +4,24 @@
 # To create a release, dispatch the https://github.com/yt-dlp/yt-dlp/actions/workflows/release.yml workflow on master
 -->
 
+### 2025.02.22.200858
+
+#### Core changes
+- [Merge branch 'master' into misc/globals-and-plugins-revive](https://github.com/yt-dlp/yt-dlp/commit/4a544353afbfab73afae8a5e8b31f9a0d615dc4c) by [pukkandan](https://github.com/pukkandan)
+- [Merge remote-tracking branch 'upstream/master' into misc/globals-and-plugins-revive](https://github.com/yt-dlp/yt-dlp/commit/5a2120c0e95abbedfdb5268a147d16bcb63c2451) by [pukkandan](https://github.com/pukkandan)
+- [Support emitting ConEmu progress codes](https://github.com/yt-dlp/yt-dlp/commit/f7a1f2d8132967a62b0f6d5665c6d2dde2d42c09) ([#10649](https://github.com/yt-dlp/yt-dlp/issues/10649)) by [Grub4K](https://github.com/Grub4K)
+- refactor
+    - [remove clear_plugins](https://github.com/yt-dlp/yt-dlp/commit/b4ba18f9136986f48dba4741ba9059b5bf94ea6f) by [pukkandan](https://github.com/pukkandan)
+    - [use walrus](https://github.com/yt-dlp/yt-dlp/commit/80f8fa771c42f3da9c97120676b2fb99047ff986) by [pukkandan](https://github.com/pukkandan)
+
+#### Extractor changes
+- **bunnycdn**: [Add extractor](https://github.com/yt-dlp/yt-dlp/commit/3a1583ca75fb523cbad0e5e174387ea7b477d175) ([#11586](https://github.com/yt-dlp/yt-dlp/issues/11586)) by [Grub4K](https://github.com/Grub4K), [seproDev](https://github.com/seproDev)
+- **niconico**: live: [Fix thumbnail extraction](https://github.com/yt-dlp/yt-dlp/commit/c2e6e1d5f77f3b720a6266f2869eb750d20e5dc1) ([#12419](https://github.com/yt-dlp/yt-dlp/issues/12419)) by [bashonly](https://github.com/bashonly)
+- **soundcloud**: [Extract tags](https://github.com/yt-dlp/yt-dlp/commit/9deed13d7cce6d3647379e50589c92de89227509) ([#12420](https://github.com/yt-dlp/yt-dlp/issues/12420)) by [bashonly](https://github.com/bashonly)
+
+#### Misc. changes
+- **test**: [Show all differences for `expect_value` and `expect_dict`](https://github.com/yt-dlp/yt-dlp/commit/a3e0c7d3b267abdf3933b709704a28d43bb46503) ([#12334](https://github.com/yt-dlp/yt-dlp/issues/12334)) by [Grub4K](https://github.com/Grub4K)
+
 ### 2025.02.19
 
 #### Core changes

@@ -224,6 +224,7 @@ The only reliable way to check if a site is supported is to try it.
  - **bt:vestlendingen**: Bergens Tidende - Vestlendingen
  - **Bundesliga**
  - **Bundestag**
+ - **BunnyCdn**
  - **BusinessInsider**
  - **BuzzFeed**
  - **BYUtv**: (**Currently broken**)
