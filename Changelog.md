@@ -4,6 +4,17 @@
 # To create a release, dispatch the https://github.com/yt-dlp/yt-dlp/actions/workflows/release.yml workflow on master
 -->
 
+### 2026.03.06.233112
+
+#### Core changes
+- [Check if missing initialized format before ending live stream on stall](https://github.com/yt-dlp/yt-dlp/commit/0ebc72fe0b0e4a4fcb2b75119e46166912c8cb88) by [pukkandan](https://github.com/pukkandan)
+- [Mark livestream as consumed on last retry if reached end](https://github.com/yt-dlp/yt-dlp/commit/b314cf20bebf3401e58fdb018a411401f83f58b2) by [pukkandan](https://github.com/pukkandan)
+- [Merge remote-tracking branch 'upstream/master' into feat/youtube/sabr](https://github.com/yt-dlp/yt-dlp/commit/34a4c07bd3ff486e3dc628bf1062627050255740) by [pukkandan](https://github.com/pukkandan)
+- [Remove warning on sabr context update](https://github.com/yt-dlp/yt-dlp/commit/df56dff210bd95eab29b9d323a8577d5cd506aad) by [pukkandan](https://github.com/pukkandan)
+- [split up test_stream](https://github.com/yt-dlp/yt-dlp/commit/f9e0da48690056d8e5ae2d01d8bfca57e7d097b3) by [pukkandan](https://github.com/pukkandan)
+- fd: [print sabr state to debug on error](https://github.com/yt-dlp/yt-dlp/commit/bfccc6807c4682738b28fe5aa7227951ab4b6c16) by [pukkandan](https://github.com/pukkandan)
+- stream: [only fallback server on HTTPError/TransportError](https://github.com/yt-dlp/yt-dlp/commit/be99198a18860eec3a63cec0752331551e181c95) by [pukkandan](https://github.com/pukkandan)
+
 ### 2026.03.03
 
 #### Extractor changes
