@@ -179,17 +179,12 @@ class SegmentFile:
             self.memory_file_limit = memory_file_limit
 
         filename = format_filename + f'.sg{segment.segment_id}.part'
-        # Store the segment in memory if it is small enough
-        if segment.content_length and segment.content_length <= self.memory_file_limit:
-            self.file = MemoryFormatIOBackend(
-                fd=self.fd,
-                filename=filename,
-            )
-        else:
-            self.file = DiskFormatIOBackend(
-                fd=self.fd,
-                filename=filename,
-            )
+        # Store the segment in memory first
+        # After writing more than the limit, then promote it to disk
+        self.file = MemoryFormatIOBackend(
+            fd=self.fd,
+            filename=filename,
+        )
 
         # Never resume a segment
         exists = self.file.exists()
