@@ -127,6 +127,9 @@ class DiskFormatIOBackend(FormatIOBackend):
 class MemoryFormatIOBackend(FormatIOBackend):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._remove()
+
+    def _remove(self):
         self._memory_store = io.BytesIO()
 
     def _create_writer(self, resume=False) -> typing.IO:
@@ -138,8 +141,9 @@ class MemoryFormatIOBackend(FormatIOBackend):
         if resume and self.exists():
             self._memory_store.seek(0, io.SEEK_END)
         else:
-            self._memory_store.seek(0)
-            self._memory_store.truncate(0)
+            # Replacing the object is safer than truncate(0) because it 
+            # bypasses BufferErrors from leaked memoryviews.
+            self._remove()
 
         return NonClosingBufferedWriter(self._memory_store)
 
@@ -152,11 +156,13 @@ class MemoryFormatIOBackend(FormatIOBackend):
         self._memory_store.seek(0)
         return NonClosingBufferedReader(self._memory_store)
 
-    def validate_length(self, expected_length):
-        return self._memory_store.getbuffer().nbytes == expected_length
-
-    def _remove(self):
-        self._memory_store = io.BytesIO()
-
     def exists(self):
-        return self._memory_store.getbuffer().nbytes > 0
+        # release the memoryview immediately
+        with self._memory_store.getbuffer() as view:
+            return view.nbytes > 0
+
+    def validate_length(self, expected_length):
+        # release the memoryview immediately
+        with self._memory_store.getbuffer() as view:
+            return view.nbytes == expected_length
+
