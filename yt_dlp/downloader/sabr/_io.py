@@ -3,6 +3,7 @@ import abc
 import io
 import os
 import shutil
+import sys
 import typing
 
 
@@ -140,7 +141,14 @@ class MemoryFormatIOBackend(FormatIOBackend):
         self._memory_store.truncate(0)
 
     def __len__(self):
-        return len(self._memory_store.getvalue())
+        # CPython: getvalue() is fast (CoW) and avoids BufferError.
+        if 'cpython' == sys.implementation.name:
+            return len(self._memory_store.getvalue())
+        
+        # Others (PyPy): getbuffer() is faster.
+        with self._memory_store.getbuffer() as view:
+            return view.nbytes
+
 
     def _create_writer(self, resume=False) -> typing.IO:
         class NonClosingBufferedWriter(io.BufferedWriter):
