@@ -136,7 +136,7 @@ class MemoryFormatIOBackend(FormatIOBackend):
         self._memory_store.seek(0)
         self._memory_store.truncate(0)
 
-    def _length(self):
+    def __len__(self):
         return len(self._memory_store.getvalue())
 
     def _create_writer(self, resume=False) -> typing.IO:
@@ -162,8 +162,8 @@ class MemoryFormatIOBackend(FormatIOBackend):
         return NonClosingBufferedReader(self._memory_store)
 
     def exists(self):
-        return self._length() > 0
+        return len(self) > 0
 
     def validate_length(self, expected_length):
-        return self._length() == expected_length
+        return len(self) == expected_length
 
