@@ -120,9 +120,6 @@ class DiskFormatIOBackend(FormatIOBackend):
         read_fp, self.filename = self.fd.sanitize_open(self.filename, 'rb')
         return read_fp
 
-    def validate_length(self, expected_length):
-        return os.path.getsize(self.filename) == expected_length
-
     def _remove(self):
         self.fd.try_remove(self.filename)
 
