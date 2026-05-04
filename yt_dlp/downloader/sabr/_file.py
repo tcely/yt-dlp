@@ -172,7 +172,6 @@ class SegmentFile:
         self.fd = fd
         self.format_filename = format_filename
         self.segment: Segment = segment
-        self.current_length = 0
 
         if memory_file_limit is None:
             self.memory_file_limit = 2 * 1024 * 1024  # Default to 2 MB
@@ -196,6 +195,11 @@ class SegmentFile:
         exists = self.file.exists()
         if exists:
             self.file.remove()
+
+    @property
+    def current_length(self):
+        """Live size reported by the backend."""
+        return len(self.file)
 
     @property
     def segment_id(self):
@@ -224,7 +228,7 @@ class SegmentFile:
     def write(self, data):
         if not self.file.mode:
             self.file.initialize_writer(resume=False)
-        self.current_length += self.file.write(data)
+        self.file.write(data)
 
         # Move from memory to disk after the limit was exceeded
         if (isinstance(self.file, MemoryFormatIOBackend) 
