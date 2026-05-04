@@ -126,8 +126,8 @@ class DiskFormatIOBackend(FormatIOBackend):
 
 class MemoryFormatIOBackend(FormatIOBackend):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
         self._remove()
+        super().__init__(*args, **kwargs)
 
     def _remove(self):
         self._memory_store = io.BytesIO()
