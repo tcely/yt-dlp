@@ -14,6 +14,10 @@ class FormatIOBackend(abc.ABC):
         self._fp = None
         self._fp_mode = None
 
+    @abc.abstractmethod
+    def __len__(self):
+        pass
+
     @property
     def writer(self):
         if self._fp is None or self._fp_mode != 'write':
@@ -54,9 +58,8 @@ class FormatIOBackend(abc.ABC):
         self._fp = None
         self._fp_mode = None
 
-    @abc.abstractmethod
     def validate_length(self, expected_length):
-        pass
+        return len(self) == expected_length
 
     def remove(self):
         self.close()
@@ -103,6 +106,9 @@ class FormatIOBackend(abc.ABC):
 
 
 class DiskFormatIOBackend(FormatIOBackend):
+    def __len__(self):
+        return 0 if not self.exists() else os.path.getsize(self.filename)
+
     def _create_writer(self, resume=False) -> typing.IO:
         if resume and self.exists():
             write_fp, self.filename = self.fd.sanitize_open(self.filename, 'ab')
@@ -163,7 +169,4 @@ class MemoryFormatIOBackend(FormatIOBackend):
 
     def exists(self):
         return len(self) > 0
-
-    def validate_length(self, expected_length):
-        return len(self) == expected_length
 
