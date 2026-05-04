@@ -132,6 +132,10 @@ class MemoryFormatIOBackend(FormatIOBackend):
     def _remove(self):
         self._memory_store = io.BytesIO()
 
+    def _reset(self):
+        self._memory_store.seek(0)
+        self._memory_store.truncate(0)
+
     def _create_writer(self, resume=False) -> typing.IO:
         class NonClosingBufferedWriter(io.BufferedWriter):
             def close(self):
@@ -141,9 +145,7 @@ class MemoryFormatIOBackend(FormatIOBackend):
         if resume and self.exists():
             self._memory_store.seek(0, io.SEEK_END)
         else:
-            # Replacing the object is safer than truncate(0) because it 
-            # bypasses BufferErrors from leaked memoryviews.
-            self._remove()
+            self._reset()
 
         return NonClosingBufferedWriter(self._memory_store)
 
