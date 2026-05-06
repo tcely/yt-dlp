@@ -206,7 +206,7 @@ class SegmentFile:
             fd=old_mem_backend.fd,
             filename=old_mem_backend.filename,
         )
-        
+
         new_disk_backend.initialize_writer(resume=False)
         try:
             self.file.close()
@@ -226,8 +226,8 @@ class SegmentFile:
         self.file.write(data)
 
         # Move from memory to disk after the limit was exceeded
-        if (isinstance(self.file, MemoryFormatIOBackend) 
-                and self.memory_file_limit is not None 
+        if (isinstance(self.file, MemoryFormatIOBackend)
+                and self.memory_file_limit is not None
                 and self.current_length > self.memory_file_limit):
             try:
                 self._promote_to_disk()
