@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 from yt_dlp.utils import DownloadError
-from ._io import DiskFormatIOBackend, MemoryFormatIOBackend
+from ._io import DiskFormatIOBackend, MemoryFormatIOBackend, ProxiedIOBackend
 
 
 @dataclasses.dataclass
@@ -174,7 +174,7 @@ class SegmentFile:
         self.segment: Segment = segment
 
         if memory_file_limit is None:
-            self.memory_file_limit = 2 * 1024 * 1024  # Default to 2 MB
+            self.memory_file_limit = 20 * 1024 * 1024  # Default to 20 MB
         else:
             self.memory_file_limit = memory_file_limit
 
@@ -202,23 +202,20 @@ class SegmentFile:
 
     def _promote_to_disk(self):
         old_mem_backend = self.file
-        new_disk_backend = DiskFormatIOBackend(
+        new_disk_backend = ProxiedIOBackend(
             fd=old_mem_backend.fd,
             filename=old_mem_backend.filename,
         )
 
-        new_disk_backend.initialize_writer(resume=False)
         try:
-            self.file.close()
-            self.read_into(new_disk_backend)
+            new_disk_backend.append(old_mem_backend)
         except Exception:
-            self.file.close()
-            self.file.initialize_writer(resume=True)
+            old_mem_backend.close()
+            old_mem_backend.initialize_writer(resume=True)
             new_disk_backend.remove()
             raise
         else:
             self.file = new_disk_backend
-            old_mem_backend.remove()
 
     def write(self, data):
         if not self.file.mode:
