@@ -2,7 +2,10 @@ from __future__ import annotations
 import abc
 import io
 import os
+import queue
 import shutil
+import threading
+import time
 import typing
 
 
@@ -166,4 +169,139 @@ class MemoryFormatIOBackend(FormatIOBackend):
 
     def exists(self):
         return len(self) > 0
+
+
+class ProxiedIOBackend(DiskFormatIOBackend):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._current_mem_be = None
+        self._lock = threading.RLock()
+        self._worker = None
+        self._write_queue = queue.Queue()
+
+        # Initialize the authoritative Disk destination once
+        self.initialize_writer(resume=False)
+
+    def _begin_queue(self):
+        with self._lock:
+            # Start or re-start the worker if it's not active
+            if self._worker is None or not self._worker.is_alive():
+                base_name = os.path.basename(self.filename)
+                self._worker = threading.Thread(
+                    target=self._drain_queue,
+                    name=f'DiskFormatIOQueue-{base_name}',
+                    daemon=True,
+                )
+                self._worker.start()
+
+    def _create_mem_backend(self):
+        """Creates a fresh, memory-only backend instance."""
+        mem_backend = MemoryFormatIOBackend(
+            fd=self.fd,
+            filename=self.filename,
+        )
+        mem_backend.initialize_writer(resume=False)
+        return mem_backend
+
+    def _create_writer(self, resume=False) -> typing.IO:
+        disk_write_fp = super()._create_writer(resume)
+
+        class NullWriter:
+            def write(self, data): pass
+            def flush(self): pass
+
+        with self._lock:
+            self._fp_mode = 'write'
+            self._fp = disk_write_fp
+            if not resume:
+                self._fp = NullWriter()
+            self._begin_queue()
+            if self._current_mem_be:
+                self.append(self._current_mem_be)
+            if not resume:
+                self.flush()
+            self._fp = disk_write_fp
+            self._current_mem_be = None
+
+        return disk_write_fp
+
+    def _drain_queue(self):
+        """
+        Worker thread that consumes sealed backends and streams to disk.
+        """
+
+        backend = self._write_queue.get()
+        while backend is not None:
+            try:
+                backend.close()
+                backend.initialize_reader()
+                shutil.copyfileobj(backend.reader, self.writer, length=self.write_buffer)
+                self.writer.flush()
+            finally:
+                # Immediately purge RAM once serialized to disk
+                backend.remove()
+                self._write_queue.task_done()
+
+            backend = self._write_queue.get()
+        else:
+            # Poison pill received: Finalize the file handle via parent
+            super().close()
+
+    def append(self, backend):
+        """Seals the backend and adds it to the queue."""
+        backend.close()
+        if backend.exists():
+            self._write_queue.put(backend)
+
+    def close(self):
+        """Stops the worker thread and finalizes the backend."""
+
+        self.flush()
+        worker = None
+        with self._lock:
+            if self._current_mem_be:
+                self.append(self._current_mem_be)
+            self._current_mem_be = None
+            if self._worker is not None and self._worker.is_alive():
+                self._write_queue.put(None)
+                worker = self._worker
+            self._worker = None
+
+        if worker:
+            worker.join()
+
+        super().close()
+
+    def flush(self):
+        """Blocks until the queue is completely drained to disk."""
+        # Ensure any data currently in the active RAM buffer is queued first
+        worker = None
+        with self._lock:
+            # Only join if the worker is actually alive to process it
+            if self._worker is not None and self._worker.is_alive():
+                worker = self._worker
+            if self._current_mem_be:
+                self.append(self._current_mem_be)
+            self._current_mem_be = None
+
+        if worker:
+            # Block until the worker finishes processing all items currently in the queue
+            self._write_queue.join()
+
+    def write(self, data: io.BufferedIOBase | bytes):
+        """
+        Writes to the live memory buffer.
+        Queues the buffer only AFTER it crosses the limit.
+        """
+
+        with self._lock:
+            if self._current_mem_be is None:
+                self._current_mem_be = self._create_mem_backend()
+            written = self._current_mem_be.write(data)
+
+            if len(self._current_mem_be) > self.write_buffer:
+                self.append(self._current_mem_be)
+                self._current_mem_be = None
+
+            return written
 
