@@ -213,6 +213,8 @@ class SegmentFile:
             filename=old_mem_backend.filename,
         )
 
+        new_disk_backend.remove()
+        new_disk_backend.initialize_writer(resume=False)
         try:
             new_disk_backend.append(old_mem_backend)
         except Exception:
