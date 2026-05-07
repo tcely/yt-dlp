@@ -413,6 +413,7 @@ class ProxiedIOBackend(DiskFormatIOBackend):
         with self._lock:
             log_dest = self._worker._logs
         def record():
+            nonlocal logs
             log_dest.append(logs)
             logs = list()
         def finish(msg):
