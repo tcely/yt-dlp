@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 from yt_dlp.utils import DownloadError
 from ._io import DiskFormatIOBackend, MemoryFormatIOBackend
 
@@ -172,36 +173,73 @@ class SegmentFile:
         self.fd = fd
         self.format_filename = format_filename
         self.segment: Segment = segment
-        self.current_length = 0
 
-        memory_file_limit = memory_file_limit if memory_file_limit is not None else 2 * 1024 * 1024  # Default to 2 MB
+        if memory_file_limit is None:
+            self.memory_file_limit = 2 * 1024 * 1024  # Default to 2 MB
+        else:
+            self.memory_file_limit = memory_file_limit
 
         filename = format_filename + f'.sg{segment.segment_id}.part'
-        # Store the segment in memory if it is small enough
-        if segment.content_length and segment.content_length <= memory_file_limit:
-            self.file = MemoryFormatIOBackend(
-                fd=self.fd,
-                filename=filename,
-            )
-        else:
-            self.file = DiskFormatIOBackend(
-                fd=self.fd,
-                filename=filename,
-            )
+        # Store the segment in memory first
+        # After writing more than the limit, then promote it to disk
+        self.file = MemoryFormatIOBackend(
+            fd=self.fd,
+            filename=filename,
+        )
 
         # Never resume a segment
-        exists = self.file.exists()
-        if exists:
-            self.file.remove()
+        # Remove an existing promoted file first
+        # Later when the limit was exceeded,
+        # the disk backend would remove the file for us.
+        # Since the memory backend won't clear files,
+        # handle this ourselves here.
+        disk_file = Path(self.file.filename)
+        if disk_file.is_file():
+            disk_file.unlink()
+
+    @property
+    def current_length(self):
+        """Live size reported by the backend."""
+        return len(self.file)
 
     @property
     def segment_id(self):
         return self.segment.segment_id
 
+    def _promote_to_disk(self):
+        old_mem_backend = self.file
+        new_disk_backend = DiskFormatIOBackend(
+            fd=old_mem_backend.fd,
+            filename=old_mem_backend.filename,
+        )
+
+        new_disk_backend.initialize_writer(resume=False)
+        try:
+            self.file.close()
+            self.read_into(new_disk_backend)
+        except Exception:
+            self.file.close()
+            self.file.initialize_writer(resume=True)
+            new_disk_backend.remove()
+            raise
+        else:
+            self.file = new_disk_backend
+            old_mem_backend.remove()
+
     def write(self, data):
         if not self.file.mode:
             self.file.initialize_writer(resume=False)
-        self.current_length += self.file.write(data)
+        self.file.write(data)
+
+        # Move from memory to disk after the limit was exceeded
+        if (isinstance(self.file, MemoryFormatIOBackend)
+                and self.memory_file_limit is not None
+                and self.current_length > self.memory_file_limit):
+            try:
+                self._promote_to_disk()
+            except (OSError, DownloadError):
+                # Stop attempting promotion for this segment if disk is full/inaccessible
+                self.memory_file_limit = None
 
     def read_into(self, file):
         self.file.initialize_reader()
