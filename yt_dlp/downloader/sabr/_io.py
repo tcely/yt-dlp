@@ -144,7 +144,7 @@ class MemoryFormatIOBackend(FormatIOBackend):
         # CPython: getvalue() is fast (CoW) and avoids BufferError.
         if 'cpython' == sys.implementation.name:
             return len(self._memory_store.getvalue())
-        
+
         # Others (PyPy): getbuffer() is faster.
         with self._memory_store.getbuffer() as view:
             return view.nbytes
