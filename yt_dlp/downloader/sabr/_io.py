@@ -364,7 +364,7 @@ class ProxiedIOBackend(DiskFormatIOBackend):
                     name=f'DiskFormatIOQueue-{base_name}',
                     daemon=True,
                 )
-                self._worker._logs = collections.deque(maxlen=10_000)
+                self._worker._logs = collections.deque(maxlen=1_000)
                 self._worker._queue = self._write_queue
                 self._worker.start()
 
@@ -412,9 +412,15 @@ class ProxiedIOBackend(DiskFormatIOBackend):
         log('Worker started.')
         with self._lock:
             log_dest = self._worker._logs
+        def record():
+            log_dest.append(logs)
+            logs = list()
+        def finish(msg):
+            self._write_queue.task_done()
+            log(msg)
+            record()
         log('Worker initialized.')
-        log_dest.append(logs)
-        logs = list()
+        record()
         backend = self._write_queue.get()
         while backend is not None:
             log('Received a new backend.')
@@ -449,18 +455,13 @@ class ProxiedIOBackend(DiskFormatIOBackend):
                 log('Backend removed.')
 
                 # Keep the queue happy and the loop going
-                self._write_queue.task_done()
-                log('Marked the queue task as done.')
-                log_dest.append(logs)
-                logs = list()
+                finish('Marked the queue task as done.')
                 backend = self._write_queue.get()
         # Poison pill received: Finalize the file handle via parent
         log('The loop has ended.')
         super().close()
-        log('The call to super().close() is completed.')
-        self._write_queue.task_done()
-        log('Marked the final queue task as done.')
-        log_dest.append(logs)
+        log('The call to super().close() has completed.')
+        finish('Marked the final queue task as done.')
 
     def append(self, backend):
         """Seals the backend and adds it to the queue."""
