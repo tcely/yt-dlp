@@ -405,7 +405,7 @@ class ProxiedIOBackend(DiskFormatIOBackend):
                 self._write_queue.task_done()
 
             backend = self._write_queue.get()
-        else: # noqa: PLW0120
+        else:  # noqa: PLW0120
             # Poison pill received: Finalize the file handle via parent
             super().close()
 
@@ -466,4 +466,3 @@ class ProxiedIOBackend(DiskFormatIOBackend):
                 self._current_mem_be = None
 
             return written
-
