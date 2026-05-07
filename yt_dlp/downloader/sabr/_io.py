@@ -143,13 +143,8 @@ class SynchronizedBytesIO(io.BytesIO):
         self._thread_lock = None
         self._async_locks = {}
 
-    def _get_thread_lock(self):
-        if self._thread_lock is None:
-            with self._init_lock:
-                if self._thread_lock is None:
-                    # RLock allows nested 'with' calls on the same thread
-                    self._thread_lock = threading.RLock()
-        return self._thread_lock
+        # Track which task holds the async lock
+        self._holder_task = None
 
     def _get_async_lock(self):
         loop = asyncio.get_running_loop()
@@ -157,6 +152,22 @@ class SynchronizedBytesIO(io.BytesIO):
             if loop not in self._async_locks:
                 self._async_locks[loop] = asyncio.Lock()
             return self._async_locks[loop]
+
+    async def _run_async(self, func, *args, **kwargs):
+        # Only bypass the lock if the CURRENT task is the one that acquired it
+        if self._holder_task is asyncio.current_task():
+            return func(*args, **kwargs)
+
+        async with self._get_async_lock():
+            return func(*args, **kwargs)
+
+    def _get_thread_lock(self):
+        if self._thread_lock is None:
+            with self._init_lock:
+                if self._thread_lock is None:
+                    # RLock allows nested 'with' calls on the same thread
+                    self._thread_lock = threading.RLock()
+        return self._thread_lock
 
     # ==== Sync Context Manager ====
     def __enter__(self):
@@ -169,29 +180,28 @@ class SynchronizedBytesIO(io.BytesIO):
     # ==== Async Context Manager ====
     async def __aenter__(self):
         await self._get_async_lock().acquire()
+        # Record the current task as the lock holder
+        self._holder_task = asyncio.current_task()
         return self
 
     async def __aexit__(self, *args):
+        self._holder_task = None
         self._get_async_lock().release()
 
     # ==== Length Operations ====
 
     def __len__(self):
         with self._get_thread_lock():
-            pos = self.tell()
+            # Use super() to avoid calling overridden methods
+            # that might attempt to acquire the lock again.
+            pos = super().tell()
             try:
-                return self.seek(0, 2)
+                return super().seek(0, io.SEEK_END)
             finally:
-                self.seek(pos)
+                super().seek(pos, io.SEEK_SET)
 
     async def alen(self):
-        # Inlined pointer logic avoids async deadlocks caused by non-reentrant asyncio locks
-        async with self._get_async_lock():
-            pos = self.tell()
-            try:
-                return self.seek(0, 2)
-            finally:
-                self.seek(pos)
+        return await self._run_async(self.__len__, self)
 
     # ==== Read Operations ====
 
@@ -200,24 +210,21 @@ class SynchronizedBytesIO(io.BytesIO):
             return super().read(size)
 
     async def aread(self, size=-1):
-        async with self._get_async_lock():
-            return super().read(size)
+        return await self._run_async(self.read, size)
 
     def readline(self, size=-1):
         with self._get_thread_lock():
             return super().readline(size)
 
     async def areadline(self, size=-1):
-        async with self._get_async_lock():
-            return super().readline(size)
+        return await self._run_async(self.readline, size)
 
     def readlines(self, hint=-1):
         with self._get_thread_lock():
             return super().readlines(hint)
 
     async def areadlines(self, hint=-1):
-        async with self._get_async_lock():
-            return super().readlines(hint)
+        return await self._run_async(self.readlines, hint)
 
     # ==== Write Operations ====
 
@@ -226,30 +233,37 @@ class SynchronizedBytesIO(io.BytesIO):
             return super().write(b)
 
     async def awrite(self, b):
-        async with self._get_async_lock():
-            return super().write(b)
+        return await self._run_async(self.write, b)
 
     def writelines(self, lines):
         with self._get_thread_lock():
             return super().writelines(lines)
 
     async def awritelines(self, lines):
-        async with self._get_async_lock():
-            return super().writelines(lines)
+        return await self._run_async(self.writelines, lines)
 
     # ==== Pointer & Buffer Operations ====
 
-    def seek(self, offset, whence=0):
+    def seek(self, offset, whence=io.SEEK_SET):
         with self._get_thread_lock():
             return super().seek(offset, whence)
+
+    async def aseek(self, offset, whence=io.SEEK_SET):
+        return await self._run_async(self.seek, offset, whence)
 
     def tell(self):
         with self._get_thread_lock():
             return super().tell()
 
+    async def atell(self):
+        return await self._run_async(self.tell)
+
     def truncate(self, size=None):
         with self._get_thread_lock():
             return super().truncate(size)
+
+    async def atruncate(self, size=None):
+        return await self._run_async(self.truncate, size)
 
     def getvalue(self):
         with self._get_thread_lock():
