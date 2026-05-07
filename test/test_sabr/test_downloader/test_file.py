@@ -143,13 +143,15 @@ class TestSequenceFile:
         )
 
         sequence_file.initialize_segment(init_segment)
-        assert isinstance(sequence_file.current_segment.file, segment_backend)
+        # We must write past the limit to switch backends
+        assert isinstance(sequence_file.current_segment.file, MemoryFormatIOBackend)
 
         data = io.BytesIO(INIT_SEGMENT_DATA)
         sequence_file.write_segment_data(data, init_segment.segment_id)
 
         assert sequence_file.current_segment.current_length == INIT_SEQUENCE_CONTENT_LENGTH
         assert data.tell() == INIT_SEQUENCE_CONTENT_LENGTH
+        assert isinstance(sequence_file.current_segment.file, segment_backend)
 
         sequence_file.end_segment(init_segment.segment_id)
         assert sequence_file.sequence.sequence_content_length == INIT_SEQUENCE_CONTENT_LENGTH
@@ -176,23 +178,27 @@ class TestSequenceFile:
         # Initialize the segment
         sequence_file.initialize_segment(init_segment)
         assert sequence_file.current_segment is not None
-        assert isinstance(sequence_file.current_segment.file, segment_backend)
+        # We must write past the limit to switch backends
+        assert isinstance(sequence_file.current_segment.file, MemoryFormatIOBackend)
 
         # Write some data and do not finalize yet
         sequence_file.write_segment_data(INIT_SEGMENT_DATA, init_segment.segment_id)
         assert sequence_file.current_segment.current_length == INIT_SEQUENCE_CONTENT_LENGTH
+        assert isinstance(sequence_file.current_segment.file, segment_backend)
         original_segment_file = sequence_file.current_segment.file
 
         # Re-initialize the same segment (e.g, due to a retry)
         sequence_file.initialize_segment(init_segment)
         assert sequence_file.current_segment is not None
         assert sequence_file.current_segment.current_length == 0
-        assert isinstance(sequence_file.current_segment.file, segment_backend)
+        # We must write past the limit to switch backends
+        assert isinstance(sequence_file.current_segment.file, MemoryFormatIOBackend)
         assert sequence_file.current_segment.file is not original_segment_file
 
         # Write data again
         sequence_file.write_segment_data(INIT_SEGMENT_DATA, init_segment.segment_id)
         assert sequence_file.current_segment.current_length == INIT_SEQUENCE_CONTENT_LENGTH
+        assert isinstance(sequence_file.current_segment.file, segment_backend)
 
         sequence_file.end_segment(init_segment.segment_id)
 
@@ -215,6 +221,9 @@ class TestSequenceFile:
         assert INIT_SEQUENCE_CONTENT_LENGTH < 2 * 1024 * 1024  # sanity check
         init_segment.content_length = INIT_SEQUENCE_CONTENT_LENGTH
         sequence_file.initialize_segment(init_segment)
+        # We must write past the limit to switch backends
+        assert isinstance(sequence_file.current_segment.file, MemoryFormatIOBackend)
+        sequence_file.write_segment_data(INIT_SEGMENT_DATA, init_segment.segment_id)
         assert isinstance(sequence_file.current_segment.file, DiskFormatIOBackend)
         sequence_file.remove()
 
@@ -728,7 +737,8 @@ class TestSegmentFile:
         segment_file = SegmentFile(fd, format_filename=filename, segment=init_segment)
         assert segment_file.exists() is False
         assert segment_file.file.filename == filename + f'.sg{init_segment.segment_id}.part'
-        assert isinstance(segment_file.file, DiskFormatIOBackend)
+        # We must write past the limit to switch backends
+        assert isinstance(segment_file.file, MemoryFormatIOBackend)
         assert segment_file.segment_id == 'i'
 
         assert not segment_file.file.mode
@@ -736,10 +746,12 @@ class TestSegmentFile:
         # Write data
         segment_file.write(data_part_one)
         assert segment_file.current_length == content_length // 2
+        assert isinstance(segment_file.file, MemoryFormatIOBackend)
         assert segment_file.file.mode
 
         segment_file.write(data_part_two)
         assert segment_file.current_length == content_length
+        assert isinstance(segment_file.file, DiskFormatIOBackend)
 
         segment_file.finish_write()
         assert segment_file.exists() is True
@@ -768,6 +780,8 @@ class TestSegmentFile:
         # If just over 2MB, should write to disk
         init_segment.content_length = 2 * 1024 * 1024 + 1  # 2MB + 1 byte
         segment_file = SegmentFile(fd, format_filename=filename, segment=init_segment)
+        segment_file.write(b'\x00' * init_segment.content_length)
+        segment_file.finish_write()
         assert isinstance(segment_file.file, DiskFormatIOBackend)
         segment_file.remove()
 
@@ -778,14 +792,18 @@ class TestSegmentFile:
         segment_file = SegmentFile(
             fd, format_filename=filename,
             segment=init_segment, memory_file_limit=INIT_SEQUENCE_CONTENT_LENGTH - 1)
+        assert isinstance(segment_file.file, MemoryFormatIOBackend)
+        segment_file.write(b'\x00' * init_segment.content_length)
+        segment_file.finish_write()
         assert isinstance(segment_file.file, DiskFormatIOBackend)
         segment_file.remove()
 
     def test_remove_existing_segment_file(self, fd, filename, init_segment):
         segment_file = SegmentFile(fd, format_filename=filename, segment=init_segment, memory_file_limit=1)
-        assert isinstance(segment_file.file, DiskFormatIOBackend)
+        assert isinstance(segment_file.file, MemoryFormatIOBackend)
         segment_file.write(INIT_SEGMENT_DATA)
         segment_file.finish_write()
+        assert isinstance(segment_file.file, DiskFormatIOBackend)
         assert segment_file.exists() is True
         assert Path(segment_file.file.filename).exists() is True
         segment_file.close()
@@ -812,13 +830,15 @@ class TestSegmentFile:
             segment=init_segment,
             memory_file_limit=memory_file_limit,
         )
-        assert isinstance(segment_file.file, backend_class)
+        # We must write past the limit to switch backends
+        assert isinstance(segment_file.file, MemoryFormatIOBackend)
 
         data = io.BytesIO(INIT_SEGMENT_DATA)
         segment_file.write(data)
 
         assert segment_file.current_length == INIT_SEQUENCE_CONTENT_LENGTH
         assert data.tell() == INIT_SEQUENCE_CONTENT_LENGTH
+        assert isinstance(segment_file.file, backend_class)
 
         segment_file.finish_write()
         assert segment_file.exists() is True
