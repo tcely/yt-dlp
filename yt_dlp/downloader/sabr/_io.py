@@ -364,7 +364,7 @@ class ProxiedIOBackend(DiskFormatIOBackend):
                     name=f'DiskFormatIOQueue-{base_name}',
                     daemon=True,
                 )
-                self._worker._logs = collections.deque((), 10_000)
+                self._worker._logs = collections.deque(maxlen=10_000)
                 self._worker._queue = self._write_queue
                 self._worker.start()
 
@@ -458,6 +458,8 @@ class ProxiedIOBackend(DiskFormatIOBackend):
         log('The loop has ended.')
         super().close()
         log('The call to super().close() is completed.')
+        self._write_queue.task_done()
+        log('Marked the final queue task as done.')
         log_dest.append(logs)
 
     def append(self, backend):
