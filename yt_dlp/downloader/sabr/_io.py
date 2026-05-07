@@ -349,7 +349,7 @@ class ProxiedIOBackend(DiskFormatIOBackend):
         with self._lock:
             disk_file = super().__len__()
             queued_bytes = self._pending_bytes_count
-            memory = len(self._current_mem_be)
+            memory = 0 if self._current_mem_be is None else len(self._current_mem_be) 
         return memory + queued_bytes + disk_file
 
     def _begin_queue(self):
