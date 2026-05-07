@@ -6,7 +6,6 @@ import os
 import queue
 import shutil
 import threading
-import time
 import typing
 
 
@@ -406,7 +405,7 @@ class ProxiedIOBackend(DiskFormatIOBackend):
                 self._write_queue.task_done()
 
             backend = self._write_queue.get()
-        else:
+        else: # noqa: PLW0120
             # Poison pill received: Finalize the file handle via parent
             super().close()
 
