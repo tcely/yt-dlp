@@ -299,6 +299,7 @@ class TestMemoryFormatIOBackend:
         with backend._memory_store.getbuffer() as view:
             assert view.nbytes == expected
         assert len(backend._memory_store.getvalue()) == expected
+        assert len(backend) == expected
 
         # We can create a reader and read the same data
         backend.initialize_reader()
