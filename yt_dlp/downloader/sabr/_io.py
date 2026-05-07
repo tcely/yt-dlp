@@ -149,7 +149,6 @@ class MemoryFormatIOBackend(FormatIOBackend):
         with self._memory_store.getbuffer() as view:
             return view.nbytes
 
-
     def _create_writer(self, resume=False) -> typing.IO:
         class NonClosingBufferedWriter(io.BufferedWriter):
             def close(self):
@@ -174,4 +173,3 @@ class MemoryFormatIOBackend(FormatIOBackend):
 
     def exists(self):
         return len(self) > 0
-
