@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 from yt_dlp.utils import DownloadError
 from ._io import DiskFormatIOBackend, MemoryFormatIOBackend
 
@@ -179,22 +180,22 @@ class SegmentFile:
             self.memory_file_limit = memory_file_limit
 
         filename = format_filename + f'.sg{segment.segment_id}.part'
-        # Store the segment in memory if it is small enough
-        if segment.content_length and segment.content_length <= self.memory_file_limit:
-            self.file = MemoryFormatIOBackend(
-                fd=self.fd,
-                filename=filename,
-            )
-        else:
-            self.file = DiskFormatIOBackend(
-                fd=self.fd,
-                filename=filename,
-            )
+        # Store the segment in memory first
+        # After writing more than the limit, then promote it to disk
+        self.file = MemoryFormatIOBackend(
+            fd=self.fd,
+            filename=filename,
+        )
 
         # Never resume a segment
-        exists = self.file.exists()
-        if exists:
-            self.file.remove()
+        # Remove an existing promoted file first
+        # Later when the limit was exceeded,
+        # the disk backend would remove the file for us.
+        # Since the memory backend won't clear files,
+        # handle this ourselves here.
+        disk_file = Path(self.file.filename)
+        if disk_file.is_file():
+            disk_file.unlink()
 
     @property
     def current_length(self):
