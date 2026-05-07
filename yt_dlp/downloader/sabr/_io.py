@@ -338,11 +338,19 @@ class ProxiedIOBackend(DiskFormatIOBackend):
         super().__init__(*args, **kwargs)
         self._current_mem_be = None
         self._lock = threading.RLock()
+        self._pending_bytes_count = 0
         self._worker = None
         self._write_queue = queue.Queue()
 
         # Initialize the authoritative Disk destination once
         self.initialize_writer(resume=False)
+
+    def __len__(self):
+        with self._lock:
+            disk_file = super().__len__()
+            queued_bytes = self._pending_bytes_count
+            memory = len(self._current_mem_be)
+        return memory + queued_bytes + disk_file
 
     def _begin_queue(self):
         with self._lock:
@@ -400,19 +408,22 @@ class ProxiedIOBackend(DiskFormatIOBackend):
                 shutil.copyfileobj(backend.reader, self.writer, length=self.write_buffer)
                 self.writer.flush()
             finally:
+                with self._lock:
+                    self._pending_bytes_count -= len(backend)
                 # Immediately purge RAM once serialized to disk
                 backend.remove()
                 self._write_queue.task_done()
 
             backend = self._write_queue.get()
-        else:  # noqa: PLW0120
-            # Poison pill received: Finalize the file handle via parent
-            super().close()
+        # Poison pill received: Finalize the file handle via parent
+        super().close()
 
     def append(self, backend):
         """Seals the backend and adds it to the queue."""
         backend.close()
         if backend.exists():
+            with self._lock:
+                self._pending_bytes_count += len(backend)
             self._write_queue.put(backend)
 
     def close(self):
