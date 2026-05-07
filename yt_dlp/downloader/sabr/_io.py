@@ -412,14 +412,17 @@ class ProxiedIOBackend(DiskFormatIOBackend):
         log('Worker started.')
         with self._lock:
             log_dest = self._worker._logs
+
         def record():
             nonlocal logs
             log_dest.append(logs)
             logs = list()
+
         def finish(msg):
             self._write_queue.task_done()
             log(msg)
             record()
+
         log('Worker initialized.')
         record()
         backend = self._write_queue.get()
