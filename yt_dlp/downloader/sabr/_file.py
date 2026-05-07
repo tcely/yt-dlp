@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 from yt_dlp.utils import DownloadError
-from ._io import DiskFormatIOBackend, MemoryFormatIOBackend
+from ._io import DiskFormatIOBackend, MemoryFormatIOBackend, ProxiedIOBackend
 
 
 @dataclasses.dataclass
@@ -208,23 +208,22 @@ class SegmentFile:
 
     def _promote_to_disk(self):
         old_mem_backend = self.file
-        new_disk_backend = DiskFormatIOBackend(
+        new_disk_backend = ProxiedIOBackend(
             fd=old_mem_backend.fd,
             filename=old_mem_backend.filename,
         )
 
+        new_disk_backend.remove()
         new_disk_backend.initialize_writer(resume=False)
         try:
-            self.file.close()
-            self.read_into(new_disk_backend)
+            new_disk_backend.append(old_mem_backend)
         except Exception:
-            self.file.close()
-            self.file.initialize_writer(resume=True)
+            old_mem_backend.close()
+            old_mem_backend.initialize_writer(resume=True)
             new_disk_backend.remove()
             raise
         else:
             self.file = new_disk_backend
-            old_mem_backend.remove()
 
     def write(self, data):
         if not self.file.mode:
