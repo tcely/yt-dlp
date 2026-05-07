@@ -1,11 +1,13 @@
 from __future__ import annotations
 import abc
 import asyncio
+import collections
 import io
 import os
 import queue
 import shutil
 import threading
+import time
 import typing
 
 
@@ -362,6 +364,8 @@ class ProxiedIOBackend(DiskFormatIOBackend):
                     name=f'DiskFormatIOQueue-{base_name}',
                     daemon=True,
                 )
+                self._worker._logs = collections.deque((), 10_000)
+                self._worker._queue = self._write_queue
                 self._worker.start()
 
     def _create_mem_backend(self):
@@ -377,21 +381,24 @@ class ProxiedIOBackend(DiskFormatIOBackend):
         disk_write_fp = super()._create_writer(resume)
 
         class NullWriter:
+            def __init__(self): self.closed = False
             def write(self, data): pass
             def flush(self): pass
+            def close(self): self.closed = True
 
         with self._lock:
             self._fp_mode = 'write'
             self._fp = disk_write_fp
             if not resume:
                 self._fp = NullWriter()
-            self._begin_queue()
             if self._current_mem_be:
                 self.append(self._current_mem_be)
-            if not resume:
-                self.flush()
+                self._current_mem_be = None
+        self._begin_queue()
+        if not resume:
+            self.flush()
+        with self._lock:
             self._fp = disk_write_fp
-            self._current_mem_be = None
 
         return disk_write_fp
 
@@ -400,23 +407,58 @@ class ProxiedIOBackend(DiskFormatIOBackend):
         Worker thread that consumes sealed backends and streams to disk.
         """
 
+        logs = list()
+        log = lambda msg, m=time.monotonic_ns, t=time.time: logs.append(f'{m()}: {t()}: {msg}')
+        log('Worker started.')
+        with self._lock:
+            log_dest = self._worker._logs
+        log('Worker initialized.')
+        log_dest.append(logs)
+        logs = list()
         backend = self._write_queue.get()
         while backend is not None:
+            log('Received a new backend.')
             try:
+                log('Closing the backend.')
                 backend.close()
+                log('Initializing the backend reader.')
                 backend.initialize_reader()
-                shutil.copyfileobj(backend.reader, self.writer, length=self.write_buffer)
-                self.writer.flush()
+                log('Reading from the backend...')
+                with self._lock:
+                    log('Lock acquired.')
+                    length = self.write_buffer
+                    writer = self.writer
+                log('Lock released.')
+                if backend.exists() and writer:
+                    log(f'Backend exists with: size={len(backend)}')
+                    log(f'Copy started with: {length=} {writer=}')
+                    shutil.copyfileobj(backend.reader, writer, length=length)
+                    log('Copy completed.')
+                    writer.flush()
+                    log('Flush completed.')
+                log('Reading is complete.')
             finally:
                 with self._lock:
+                    log('Lock acquired.')
+                    log(f'Pending byte count: {self._pending_bytes_count}')
                     self._pending_bytes_count -= len(backend)
+                    log(f'Pending byte count: {self._pending_bytes_count}')
+                log('Lock released.')
                 # Immediately purge RAM once serialized to disk
                 backend.remove()
-                self._write_queue.task_done()
+                log('Backend removed.')
 
-            backend = self._write_queue.get()
+                # Keep the queue happy and the loop going
+                self._write_queue.task_done()
+                log('Marked the queue task as done.')
+                log_dest.append(logs)
+                logs = list()
+                backend = self._write_queue.get()
         # Poison pill received: Finalize the file handle via parent
+        log('The loop has ended.')
         super().close()
+        log('The call to super().close() is completed.')
+        log_dest.append(logs)
 
     def append(self, backend):
         """Seals the backend and adds it to the queue."""
@@ -429,19 +471,20 @@ class ProxiedIOBackend(DiskFormatIOBackend):
     def close(self):
         """Stops the worker thread and finalizes the backend."""
 
-        self.flush()
         worker = None
         with self._lock:
+            worker = self._worker
             if self._current_mem_be:
                 self.append(self._current_mem_be)
             self._current_mem_be = None
-            if self._worker is not None and self._worker.is_alive():
-                self._write_queue.put(None)
-                worker = self._worker
-            self._worker = None
 
-        if worker:
+        if worker is not None and worker.is_alive():
+            self._write_queue.put(None)
+            self.flush()
             worker.join()
+
+        with self._lock:
+            self._worker = None
 
         super().close()
 
@@ -450,14 +493,13 @@ class ProxiedIOBackend(DiskFormatIOBackend):
         # Ensure any data currently in the active RAM buffer is queued first
         worker = None
         with self._lock:
-            # Only join if the worker is actually alive to process it
-            if self._worker is not None and self._worker.is_alive():
-                worker = self._worker
+            worker = self._worker
             if self._current_mem_be:
                 self.append(self._current_mem_be)
             self._current_mem_be = None
 
-        if worker:
+        # Only join if the worker is actually alive to process it
+        if worker is not None and worker.is_alive():
             # Block until the worker finishes processing all items currently in the queue
             self._write_queue.join()
 
