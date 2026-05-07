@@ -4,7 +4,6 @@ import asyncio
 import io
 import os
 import shutil
-import sys
 import threading
 import typing
 
