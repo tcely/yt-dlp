@@ -175,7 +175,7 @@ class SegmentFile:
         self.segment: Segment = segment
 
         if memory_file_limit is None:
-            self.memory_file_limit = 20 * 1024 * 1024  # Default to 20 MB
+            self.memory_file_limit = 2 * 1024 * 1024  # Default to 2 MB
         else:
             self.memory_file_limit = memory_file_limit
 
