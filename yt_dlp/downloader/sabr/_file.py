@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 from yt_dlp.utils import DownloadError
 from ._io import DiskFormatIOBackend, MemoryFormatIOBackend
 
@@ -187,9 +188,14 @@ class SegmentFile:
         )
 
         # Never resume a segment
-        exists = self.file.exists()
-        if exists:
-            self.file.remove()
+        # Remove an existing promoted file first
+        # Later when the limit was exceeded,
+        # the disk backend would remove the file for us.
+        # Since the memory backend won't clear files,
+        # handle this ourselves here.
+        disk_file = Path(self.file.filename)
+        if disk_file.is_file():
+            disk_file.unlink()
 
     @property
     def current_length(self):
