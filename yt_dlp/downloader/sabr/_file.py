@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import collections
 import dataclasses
+import hashlib
 from pathlib import Path
 from yt_dlp.utils import DownloadError
 from ._io import DiskFormatIOBackend, MemoryFormatIOBackend, ProxiedIOBackend
@@ -26,6 +28,15 @@ class Sequence:
     sequence_content_length: int = 0
     first_segment: Segment | None = None
     last_segment: Segment | None = None
+
+
+@dataclasses.dataclass
+class RecoveryPackage:
+    backend: MemoryFormatIOBackend
+    pre_checksum: str
+    post_checksum: str
+    offset: int
+    length: int
 
 
 class SequenceFile:
@@ -173,6 +184,14 @@ class SegmentFile:
         self.fd = fd
         self.format_filename = format_filename
         self.segment: Segment = segment
+        self._cumulative_hasher = hashlib.sha256()
+        self._diverted_packages = list()
+        self._expected_position = 0
+        self._is_diverted = False
+        self._known_good_position = 0
+        # Initialize to the hash of an empty stream to start the chain
+        self._known_good_checksum = self._cumulative_hasher.hexdigest()
+        self._packages = collections.deque(maxlen=8)
 
         if memory_file_limit is None:
             self.memory_file_limit = 2 * 1024 * 1024  # Default to 2 MB
@@ -200,11 +219,136 @@ class SegmentFile:
     @property
     def current_length(self):
         """Live size reported by the backend."""
-        return len(self.file)
+        disk_size = len(self.file)
+        if isinstance(self.file, ProxiedIOBackend):
+            self.file.flush()
+            fp = Path(self.file.filename)
+            disk_size = fp.stat().st_size if fp.is_file() else 0
+        if not self._is_diverted:
+            return disk_size
+        return self._known_good_position + sum(p.length for p in self._diverted_packages)
 
     @property
     def segment_id(self):
         return self.segment.segment_id
+
+    def write(self, data):
+        package = self._create_package(data)
+
+        if self._is_diverted:
+            self._diverted_packages.append(package)
+            return
+
+        self._packages.append(package)
+
+        try:
+            if not self.file.mode:
+                self.file.initialize_writer(resume=False)
+
+            # Use append() when available
+            if hasattr(self.file, 'append') and callable(self.file.append):
+                self.file.append(package.backend)
+            else:
+                package.backend.initialize_reader()
+                self.file.write(package.backend.reader)
+                package.backend.close()
+                mem_backend_too_large = (
+                    isinstance(self.file, MemoryFormatIOBackend)
+                    and len(self.file) > self.memory_file_limit
+                )
+                if mem_backend_too_large:
+                    self._promote_to_disk()
+        except (OSError, DownloadError):
+            self._is_diverted = True
+            self.file.close()
+            self.file.initialize_reader()
+            disk_size = len(self.file)
+            self.file.close()
+            previous_pkg = None
+            for pkg in iter(self._packages):
+                if (pkg.offset + pkg.length) < disk_size:
+                    self._known_good_checksum = pkg.pre_checksum
+                    self._known_good_position = pkg.offset
+                    previous_pkg = pkg
+                else:
+                    if previous_pkg is not None:
+                        self._diverted_packages.append(previous_pkg)
+                        previous_pkg = None
+                    self._diverted_packages.append(pkg)
+        else:
+            # Update the known good state only on successful write
+            self._known_good_position = self._expected_position
+            self._known_good_checksum = package.post_checksum
+
+    def read_into(self, destination):
+        hasher = hashlib.sha256()
+        # Read the verified portion of the disk file
+        if self.file.exists():
+            self.file.close()
+            self._read_up_to(hasher.update, self._known_good_position)
+            if hasher.hexdigest() != self._known_good_checksum:
+                raise DownloadError(f'Disk corruption in segment {self.segment.segment_id}')
+            for pkg in self._diverted_packages:
+                # Pre-condition: Prove end of disk matches start of memory chain
+                if hasher.hexdigest() != pkg.pre_checksum:
+                    raise DownloadError(f'Integrity gap detected before package at offset {pkg.offset}')
+                pkg.backend.initialize_reader()
+                hasher.update(pkg.backend.reader.read())
+                pkg.backend.close()
+            if hasher.hexdigest() != self._cumulative_hasher.hexdigest():
+                raise DownloadError(f'Final integrity check failed for segment {self.segment.segment_id}')
+            # Logically truncate: stop exactly at the last known good byte
+            self._read_up_to(destination.writer.write, self._known_good_position, length=destination.write_buffer)
+
+        # Append all diverted packages
+        for pkg in self._diverted_packages:
+            pkg.backend.initialize_reader()
+            pkg.backend.read_into(destination)
+            pkg.backend.close()
+
+    def exists(self):
+        return self.file.exists()
+
+    def remove(self):
+        self.close()
+        self.file.remove()
+        for pkg in self._diverted_packages:
+            pkg.backend.remove()
+        self._diverted_packages.clear()
+        self._packages.clear()
+
+    def finish_write(self):
+        self.close()
+
+    def close(self):
+        self.file.close()
+
+    def _create_package(self, data):
+        # Create memory-backed package
+        pre_checksum = self._cumulative_hasher.hexdigest()
+        start_offset = self._expected_position
+        # Named specifically for the offset and cleanup pattern
+        pkg_filename = f'{self.format_filename}.sg{self.segment_id}.pkg.{start_offset}.part'
+        pkg_backend = MemoryFormatIOBackend(self.fd, pkg_filename)
+        pkg_backend.initialize_writer()
+        pkg_backend.write(data)
+        pkg_backend.close()
+
+        data_bytes = pkg_backend._memory_store.getvalue()
+        assert isinstance(data_bytes, bytes), type(data_bytes)
+
+        # Update running state
+        self._cumulative_hasher.update(data_bytes)
+        self._expected_position += len(data_bytes)
+        post_checksum = self._cumulative_hasher.hexdigest()
+
+        return RecoveryPackage(
+            backend=pkg_backend,
+            pre_checksum=pre_checksum,
+            post_checksum=post_checksum,
+            offset=start_offset,
+            length=len(data_bytes),
+        )
 
     def _promote_to_disk(self):
         old_mem_backend = self.file
@@ -213,9 +357,9 @@ class SegmentFile:
             filename=old_mem_backend.filename,
         )
 
-        new_disk_backend.remove()
-        new_disk_backend.initialize_writer(resume=False)
         try:
+            new_disk_backend.remove()
+            new_disk_backend.initialize_writer(resume=False)
             new_disk_backend.append(old_mem_backend)
         except Exception:
             old_mem_backend.close()
@@ -225,35 +369,19 @@ class SegmentFile:
         else:
             self.file = new_disk_backend
 
-    def write(self, data):
-        if not self.file.mode:
-            self.file.initialize_writer(resume=False)
-        self.file.write(data)
+    def _read_up_to(self, func, /, limit=0, *, length=None):
+        assert callable(func), type(func)
+        if length is None:
+            # default to a size that fits in a CPU cache
+            length = 1024 * 32  # KiB
 
-        # Move from memory to disk after the limit was exceeded
-        if (isinstance(self.file, MemoryFormatIOBackend)
-                and self.memory_file_limit is not None
-                and self.current_length > self.memory_file_limit):
-            try:
-                self._promote_to_disk()
-            except (OSError, DownloadError):
-                # Stop attempting promotion for this segment if disk is full/inaccessible
-                self.memory_file_limit = None
-
-    def read_into(self, file):
         self.file.initialize_reader()
-        self.file.read_into(file)
-        self.file.close()
-
-    def exists(self):
-        return self.file.exists()
-
-    def remove(self):
-        self.close()
-        self.file.remove()
-
-    def finish_write(self):
-        self.close()
-
-    def close(self):
+        remaining = limit
+        while remaining > 0:
+            cs = min(remaining, length)
+            b = self.file.reader.read(cs)
+            if not b:
+                break
+            func(b)
+            remaining -= len(b)
         self.file.close()
