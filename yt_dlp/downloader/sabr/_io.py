@@ -343,6 +343,7 @@ class ProxiedIOBackend(DiskFormatIOBackend):
         self._pending_bytes_count = 0
         self._worker = None
         self._write_queue = queue.Queue()
+        self.exc_info = None
 
         # Initialize the authoritative Disk destination once
         self.initialize_writer(resume=False)
@@ -356,6 +357,7 @@ class ProxiedIOBackend(DiskFormatIOBackend):
 
     def _begin_queue(self):
         with self._lock:
+            self.exc_info = None
             # Start or re-start the worker if it's not active
             if self._worker is None or not self._worker.is_alive():
                 base_name = os.path.basename(self.filename)
@@ -437,16 +439,23 @@ class ProxiedIOBackend(DiskFormatIOBackend):
                 with self._lock:
                     log('Lock acquired.')
                     length = self.write_buffer
+                    suceeded = self.exc_info is None
                     writer = self.writer
                 log('Lock released.')
-                if backend.exists() and writer:
+                if suceeded and writer and backend.exists():
                     log(f'Backend exists with: size={len(backend)}')
                     log(f'Copy started with: {length=} {writer=}')
                     shutil.copyfileobj(backend.reader, writer, length=length)
                     log('Copy completed.')
                     writer.flush()
                     log('Flush completed.')
+                elif not suceeded:
+                    log('Skipped copying after the exception information was recorded.')
                 log('Reading is complete.')
+            except Exception as e:
+                with self._lock:
+                    self.exc_info = e
+                log(f'Recorded the following exception: {e!r}')
             finally:
                 with self._lock:
                     log('Lock acquired.')
@@ -472,6 +481,8 @@ class ProxiedIOBackend(DiskFormatIOBackend):
         backend.close()
         if backend.exists():
             with self._lock:
+                if self.exc_info is not None:
+                    raise self.exc_info
                 self._pending_bytes_count += len(backend)
             self._write_queue.put(backend)
 
@@ -481,9 +492,12 @@ class ProxiedIOBackend(DiskFormatIOBackend):
         worker = None
         with self._lock:
             worker = self._worker
-            if self._current_mem_be:
-                self.append(self._current_mem_be)
+            backend = self._current_mem_be
             self._current_mem_be = None
+            if backend and self.exc_info is None:
+                self.append(backend)
+            elif backend:
+                backend.remove()
 
         if worker is not None and worker.is_alive():
             self._write_queue.put(None)
@@ -495,15 +509,23 @@ class ProxiedIOBackend(DiskFormatIOBackend):
 
         super().close()
 
+        with self._lock:
+            if self.exc_info is not None:
+                raise self.exc_info
+
     def flush(self):
         """Blocks until the queue is completely drained to disk."""
         # Ensure any data currently in the active RAM buffer is queued first
         worker = None
         with self._lock:
             worker = self._worker
-            if self._current_mem_be:
-                self.append(self._current_mem_be)
+            backend = self._current_mem_be
             self._current_mem_be = None
+            if worker and self.writer and self.exc_info is not None:
+                backend.remove()
+                raise self.exc_info
+            if backend:
+                self.append(backend)
 
         # Only join if the worker is actually alive to process it
         if worker is not None and worker.is_alive():
