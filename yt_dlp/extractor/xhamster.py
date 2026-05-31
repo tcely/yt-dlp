@@ -15,6 +15,7 @@ from ..utils import (
     join_nonempty,
     parse_duration,
     str_or_none,
+    traverse_obj,
     try_get,
     unified_strdate,
     url_or_none,
@@ -323,6 +324,18 @@ class XHamsterIE(InfoExtractor):
                             'Referer': urlh.url,
                         },
                     })
+
+            subtitles = {
+                item['lang']: [{'ext': 'vtt',
+                                'url': item['urls']['vtt'],
+                                'name': item['label'],
+                                }] for item in traverse_obj(
+                    initials,
+                    ('xplayerPluginSettings', 'subtitles', 'tracks'),
+                    expected_type=list,
+                )
+            }
+
             xplayer_sources = try_get(
                 initials, lambda x: x['xplayerSettings']['sources'], dict)
             if xplayer_sources:
@@ -414,6 +427,7 @@ class XHamsterIE(InfoExtractor):
                 'age_limit': age_limit if age_limit is not None else 18,
                 'categories': categories,
                 'formats': self._fixup_formats(formats),
+                'subtitles': subtitles,
                 # TODO: Revert to ('res', 'proto', 'tbr') when HTTP formats problem is resolved
                 '_format_sort_fields': ('res', 'proto:m3u8', 'tbr'),
             }
