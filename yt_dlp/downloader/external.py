@@ -310,10 +310,11 @@ class Aria2cFD(ExternalFD):
         return fn if os.path.isabs(fn) else f'.{os.path.sep}{fn}'
 
     def _make_cmd(self, tmpfilename, info_dict):
-        cmd = [self.exe, '-c', '--no-conf',
+        cmd = [self.exe, '--no-conf',
                '--console-log-level=warn', '--summary-interval=0', '--download-result=hide',
-               '--http-accept-gzip=true', '--file-allocation=none', '-x16', '-j16', '-s16',
-               '--min-split-size', '1M']
+               '--max-connection-per-server=16', '--split=16', '--min-split-size=1M',
+               '--allow-piece-length-change=true', '--always-resume=false',
+               '--http-accept-gzip=true']
 
         cmd += [f'--load-cookies={self._write_cookies()}']
         if info_dict.get('http_headers') is not None:
@@ -325,6 +326,7 @@ class Aria2cFD(ExternalFD):
         cmd += self._bool_option('--check-certificate', 'nocheckcertificate', 'false', 'true', '=')
         cmd += self._bool_option('--remote-time', 'updatetime', 'true', 'false', '=')
         cmd += self._bool_option('--show-console-readout', 'noprogress', 'false', 'true', '=')
+        cmd += self._bool_option('--remove-control-file', 'continuedl', 'false', 'true', '=')
         cmd += self._configuration_args()
 
         # aria2c strips out spaces from the beginning/end of filenames and paths.
@@ -340,7 +342,9 @@ class Aria2cFD(ExternalFD):
         cmd += [
             '--out',
             self._aria2c_filename(os.path.basename(tmpfilename)),
+            '--allow-overwrite=true',
             '--auto-file-renaming=false',
+            '--force-save=false'
             '--',
             info_dict['url'],
         ]
