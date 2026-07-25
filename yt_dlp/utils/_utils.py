@@ -2233,27 +2233,24 @@ class LazyList(collections.abc.Sequence):
 
     def __init__(self, iterable, *, reverse=False, _cache=None):
         self._iterable = iter(iterable)
-        self._cache = [] if _cache is None else _cache
+        self._cache = [] if _cache is None else list(_cache)
         self._reversed = reverse
 
     def __iter__(self):
         if self._reversed:
             # We need to consume the entire iterable to iterate in reverse
-            yield from self.exhaust()
+            yield from reversed(self.exhaust())
             return
         yield from self._cache
         for item in self._iterable:
             self._cache.append(item)
             yield item
 
-    def _exhaust(self):
+    def exhaust(self):
+        """Evaluate the entire iterable"""
         self._cache.extend(self._iterable)
         self._iterable = []  # Discard the emptied iterable to make it pickle-able
         return self._cache
-
-    def exhaust(self):
-        """Evaluate the entire iterable"""
-        return self._exhaust()[::-1 if self._reversed else 1]
 
     @staticmethod
     def _reverse_index(x):
@@ -2275,7 +2272,7 @@ class LazyList(collections.abc.Sequence):
                 or (stop is None and step > 0)):
             # We need to consume the entire iterable to be able to slice from the end
             # Obviously, never use this with infinite iterables
-            self._exhaust()
+            self.exhaust()
             try:
                 return self._cache[idx]
             except IndexError as e:
@@ -2296,8 +2293,7 @@ class LazyList(collections.abc.Sequence):
         return True
 
     def __len__(self):
-        self._exhaust()
-        return len(self._cache)
+        return len(self.exhaust())
 
     def __reversed__(self):
         return type(self)(self._iterable, reverse=not self._reversed, _cache=self._cache)
