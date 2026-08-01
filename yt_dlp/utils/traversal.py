@@ -11,11 +11,11 @@ import re
 import typing
 import xml.etree.ElementTree
 
+from ._lists import LazyList
 from ._utils import (
     IDENTITY,
     NO_DEFAULT,
     ExtractorError,
-    LazyList,
     deprecation_warning,
     get_elements_html_by_class,
     get_elements_html_by_attribute,

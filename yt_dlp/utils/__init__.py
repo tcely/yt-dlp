@@ -6,5 +6,6 @@ del passthrough_module
 
 # isort: off
 from .traversal import *
+from ._lists import *
 from ._utils import *
 from ._utils import _configuration_args, _get_exe_version_output  # noqa: F401
