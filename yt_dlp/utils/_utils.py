@@ -2224,6 +2224,113 @@ def frange(start=0, stop=None, step=1):
         start += step
 
 
+class ChunkedList(collections.abc.Sequence):
+
+    class IndexError(IndexError):  # noqa: A001
+        pass
+
+    def __init__(self, iterable=None, *, chunk_size=None):
+        if chunk_size is None:
+            chunk_size = 1 << 13
+        self.chunk_size = chunk_size
+        self._chunks = []
+        self._length = 0
+        if iterable is not None:
+            self.extend(iterable)
+
+    def append(self, item):
+        # Create a new partial chunk only if the cache is empty or the last chunk is full
+        if not self._chunks or len(self._chunks[-1]) >= self.chunk_size:
+            self._chunks.append([item])
+        else:
+            self._chunks[-1].append(item)
+        self._length += 1
+
+    def extend(self, iterable):
+        iterator = iter(iterable)
+
+        # If chunks exist and the last one has space, fill it completely first
+        if self._chunks and len(self._chunks[-1]) < self.chunk_size:
+            space_left = self.chunk_size - len(self._chunks[-1])
+            initial_slice = list(itertools.islice(iterator, space_left))
+
+            if not initial_slice:
+                return
+
+            self._chunks[-1].extend(initial_slice)
+            self._length += len(initial_slice)
+
+        # Pull remaining chunks from the source iterable.
+        # This will strictly yield fully filled chunks, or a single partially filled final chunk.
+        chunk_fetcher = iter(lambda: list(itertools.islice(iterator, self.chunk_size)), [])
+        for chunk in chunk_fetcher:
+            self._chunks.append(chunk)
+            self._length += len(chunk)
+
+    def __len__(self):
+        return self._length
+
+    def __iter__(self):
+        for chunk in self._chunks:
+            yield from chunk
+
+    def __reversed__(self):
+        for chunk in reversed(self._chunks):
+            yield from reversed(chunk)
+
+    def __contains__(self, value):
+        return any(value in chunk for chunk in self._chunks)
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return super().__eq__(other)
+        if self.chunk_size != other.chunk_size or len(self) != len(other):
+            return False
+        return self._chunks == other._chunks
+
+    def __getitem__(self, idx):
+        if isinstance(idx, slice):
+            start, stop, step = idx.indices(self._length)
+
+            start_chunk = start // self.chunk_size
+            start_offset = start % self.chunk_size
+
+            stop_chunk = stop // self.chunk_size
+            stop_offset = stop % self.chunk_size
+
+            if start_chunk == stop_chunk or (start < stop and 1 == step):
+                cl = type(self)(chunk_size=self.chunk_size)
+                try:
+                    if start_chunk == stop_chunk:
+                        cl.extend(self._chunks[start_chunk][start_offset:stop_offset:step])
+                    else:
+                        cl.extend(self._chunks[start_chunk][start_offset:])
+                        for c_idx in range(1 + start_chunk, stop_chunk):
+                            cl.extend(self._chunks[c_idx])
+                        if stop_offset > 0:
+                            cl.extend(self._chunks[stop_chunk][:stop_offset])
+                except IndexError as e:
+                    raise self.IndexError(e) from e
+                else:
+                    return cl
+
+            return type(self)((self._get_element(i) for i in range(start, stop, step)), chunk_size=self.chunk_size)
+        elif isinstance(idx, int):
+            return self._get_element(idx)
+        else:
+            raise TypeError('indices must be integers or slices')
+
+    def _get_element(self, idx):
+        if idx < 0:
+            idx += self._length
+        if not (0 <= idx < self._length):
+            raise self.IndexError('index out of range')
+        try:
+            return self._chunks[idx // self.chunk_size][idx % self.chunk_size]
+        except IndexError as e:
+            raise self.IndexError(e) from e
+
+
 class LazyList(collections.abc.Sequence):
     """Lazy immutable list from an iterable
     Note that slices of a LazyList are lists and not LazyList"""
@@ -2239,7 +2346,7 @@ class LazyList(collections.abc.Sequence):
             self._cache = iterable._cache
         else:
             self._iterable = iter(iterable)
-            self._cache = []
+            self._cache = ChunkedList()
 
     def __iter__(self):
         if self._reversed:
@@ -2302,7 +2409,9 @@ class LazyList(collections.abc.Sequence):
             if n > 0:
                 self._cache.extend(itertools.islice(self._iterable, n))
         try:
-            return self._cache[idx]
+            r = self._cache[idx]
+            # guarantee a list is returned for slices
+            return list(r) if step else r
         except IndexError as e:
             raise self.IndexError(e) from e
 

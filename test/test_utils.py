@@ -2025,7 +2025,7 @@ Line 1
 
         def test(ll, idx, val, cache):
             self.assertEqual(ll[idx], val)
-            self.assertEqual(ll._cache, list(cache))
+            self.assertEqual(list(ll._cache), list(cache))
 
         ll = LazyList(range(10))
         test(ll, 0, 0, range(1))
