@@ -301,11 +301,25 @@ class WgetFD(ExternalFD):
         return cmd
 
 
+class Aria2Levels(dict):
+    def from_flags(self, needle, flags, *, default=None):
+        ret = 0
+        if default is not None:
+            ret = self.get(default)
+        for flag in reversed(flags):
+            if flag.startswith(f'--{needle}='):
+                key = flag.split('=', 1)[1]
+                ret = self.get(key) or ret
+                if ret:
+                    break
+        return ret
+
+
 class Aria2cFD(ExternalFD):
     AVAILABLE_OPT = '-v'
     SUPPORTED_PROTOCOLS = ('http', 'https', 'ftp', 'ftps')
 
-    _LOG_LEVELS = {'debug': 0, 'info': 1, 'notice': 2, 'warn': 3, 'error': 4}
+    _LOG_LEVELS = Aria2Levels({'debug': 0, 'info': 1, 'notice': 2, 'warn': 3, 'error': 4})
     _ARIA2C_PROGRESS_RE = re.compile(r'\[#(?P<id>[a-f0-9]+)\s+(?P<downloaded_str>\d+)B/(?P<total_str>\d+)B.+?DL:(?P<speed_str>\d+)B')
     _ARIA2C_SPEED_RE = re.compile(r'\[.*?DL:(?P<speed_str>\d+)B.*?\]')
     _ARIA2C_LOG_LEVEL_RE = re.compile(r'\[\x1b\[[;\d]*m(?P<level>\w+)\x1b\[[;\d]*m\]')
@@ -320,25 +334,17 @@ class Aria2cFD(ExternalFD):
     def _aria2c_filename(fn):
         return fn if os.path.isabs(fn) else f'.{os.path.sep}{fn}'
 
-    def _determine_user_log_level(self, cmd):
-        user_level_str = 'notice'
-        for arg in cmd[::-1]:
-            if arg.startswith('--console-log-level='):
-                user_level_str = arg.split('=', 1)[1]
-                break
-        return self._LOG_LEVELS.get(user_level_str, self._LOG_LEVELS['notice'])
-
-    def _can_print_line(self, line, quiet, log_level):
-        if quiet or self._ARIA2C_REDIRECTING_STR in line:
+    def _can_print_line(self, line):
+        if self._quiet or self._ARIA2C_REDIRECTING_STR in line:
             return False
 
         match = self._ARIA2C_LOG_LEVEL_RE.search(line)
         if not match:
             return True
 
-        line_level_str = match.group('level').lower()
-        line_level = self._LOG_LEVELS.get(line_level_str, 99)
-        return line_level >= log_level
+        line_level_str = match.group('level')
+        line_level = self._LOG_LEVELS.get(line_level_str.lower(), 99)
+        return line_level >= self._log_level
 
     def _parse_line(self, line, status, start_time):
         if progress_match := self._ARIA2C_PROGRESS_RE.search(line):
@@ -390,7 +396,7 @@ class Aria2cFD(ExternalFD):
 
         # Extract user intent from configuration args before we force our overrides
         self._quiet = any(i in cmd for i in ('-q', '--quiet', '--quiet=true'))
-        self._log_level = self._determine_user_log_level(cmd)
+        self._log_level = self._LOG_LEVELS.from_flags(needle='console-log-level', flags=cmd, default='notice')
 
         params_to_clear = ('-q', '--quiet', '--human-readable', '--truncate-console-readout', '--show-console-readout')
         cmd = [i for i in cmd if not i.startswith(params_to_clear)]
@@ -444,7 +450,7 @@ class Aria2cFD(ExternalFD):
                     if (
                         not line
                         or self._parse_line(line, status, start_time)
-                        or not self._can_print_line(line, self._quiet, self._log_level)
+                        or not self._can_print_line(line)
                     ):
                         continue
 
