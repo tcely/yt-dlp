@@ -195,6 +195,8 @@ class ExternalFD(FragmentFD):
 class CurlFD(ExternalFD):
     AVAILABLE_OPT = '-V'
     _CAPTURE_STDERR = False  # curl writes the progress to stderr
+    _MIN_VERSION_FOR_PI = (7, 68)
+    _MIN_VERSION_FOR_PMH = (8, 16)
     _MIN_VERSION_FOR_STDIN_COOKIES = (7, 59)
 
     @classmethod
@@ -215,6 +217,10 @@ class CurlFD(ExternalFD):
     def _make_cmd(self, tmpfilename, info_dict):
         cmd = [self.exe, '--location', '-o', tmpfilename, '--compressed']
 
+        if self._curl_version >= self._MIN_VERSION_FOR_PI:
+            cmd += ['--parallel-immediate']
+        if self._curl_version >= self._MIN_VERSION_FOR_PMH:
+            cmd += ['--parallel-max-host', '2']
         if self._curl_version >= self._MIN_VERSION_FOR_STDIN_COOKIES:
             # Supports `--cookies -`
             cmd += ['--cookie', '-']
