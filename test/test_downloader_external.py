@@ -48,6 +48,26 @@ TEST_COOKIE = {
 TEST_INFO = {'url': 'http://www.example.com/'}
 
 
+@unittest.skipUnless(CurlFD.available(), 'curl not found')
+class TestCurlFD(unittest.TestCase):
+    def test_make_cmd(self):
+        params = dict(external_downloader_args=dict(curl=[
+            '--parallel',
+        ]))
+        with FakeYDL() as ydl:
+            downloader = CurlFD(ydl, {})
+            cmd = downloader._make_cmd('test', TEST_INFO)
+            assert '--parallel' not in cmd
+
+            downloader = CurlFD(ydl, params)
+            cmd = downloader._make_cmd('test', TEST_INFO)
+            assert '--parallel' in cmd
+            if downloader._curl_version >= downloader._MIN_VERSION_FOR_PI:
+                assert '--parallel-immediate' in cmd
+            if downloader._curl_version >= downloader._MIN_VERSION_FOR_PMH:
+                assert '--parallel-max-host' in cmd
+
+
 class TestHttpieFD(unittest.TestCase):
     def test_make_cmd(self):
         with FakeYDL() as ydl:
