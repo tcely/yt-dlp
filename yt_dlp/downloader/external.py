@@ -202,8 +202,8 @@ class CurlFD(ExternalFD):
     @classmethod
     def available(cls, path=None):
         if path is None:
-            path = 'curl'
-        output = _get_exe_version_output(path, ['-V'])
+            path = cls.EXE_NAME
+        output = _get_exe_version_output(path, [cls.AVAILABLE_OPT])
         if not output:
             return False
         parts = output.split(' ', maxsplit=2)
