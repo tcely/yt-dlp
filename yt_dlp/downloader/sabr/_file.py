@@ -10,6 +10,9 @@ from ._io import DiskFormatIOBackend, MemoryFormatIOBackend, ProxiedIOBackend
 DEFAULT_MAX_TRACKING_SEGMENTS = 2
 DEFAULT_SEGMENT_MEMORY_FILE_LIMIT = 2 * 1024 * 1024  # 2 MB
 
+DEFAULT_MAX_TRACKING_SEGMENTS = 2
+DEFAULT_SEGMENT_MEMORY_FILE_LIMIT = 2 * 1024 * 1024  # 2 MB
+
 
 @dataclasses.dataclass
 class Segment:
