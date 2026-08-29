@@ -263,7 +263,7 @@ class SegmentFile:
     @current_length.setter
     def current_length(self, value):
         if 0 == value:
-            slf.remove()
+            self.remove()
             self._reset()
         # otherwise ignore the requested value
         return self.current_length
