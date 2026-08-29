@@ -213,20 +213,24 @@ class SegmentFile:
         self.fd = fd
         self.format_filename = format_filename
         self.segment: Segment = segment
-        self.current_length = 0
-        self._cumulative_hasher = hashlib.sha256()
         self._diverted_packages = list()
+        self._packages = collections.deque(maxlen=8)
+
+        if memory_file_limit is None:
+            memory_file_limit = DEFAULT_SEGMENT_MEMORY_FILE_LIMIT
+        self.memory_file_limit = memory_file_limit
+
+        self._reset()
+
+    def _reset(self):
+        self._cumulative_hasher = hashlib.sha256()
         self._expected_position = 0
         self._is_diverted = False
         self._known_good_position = 0
         # Initialize to the hash of an empty stream to start the chain
         self._known_good_checksum = self._cumulative_hasher.hexdigest()
-        self._packages = collections.deque(maxlen=8)
 
-        if memory_file_limit is None:
-            memory_file_limit = DEFAULT_SEGMENT_MEMORY_FILE_LIMIT
-
-        filename = format_filename + f'.sg{segment.segment_id}.part'
+        filename = self.format_filename + f'.sg{self.segment.segment_id}.part'
         # Store the segment in memory first
         # After writing more than the limit, then promote it to disk
         self.file = MemoryFormatIOBackend(
@@ -256,6 +260,14 @@ class SegmentFile:
             return disk_size
         return self._known_good_position + sum(p.length for p in self._diverted_packages)
 
+    @current_length.setter
+    def current_length(self, value):
+        if 0 == value:
+            slf.remove()
+            self._reset()
+        # otherwise ignore the requested value
+        return self.current_length
+
     @property
     def segment_id(self):
         return self.segment.segment_id
@@ -274,7 +286,7 @@ class SegmentFile:
                 self.file.initialize_writer(resume=False)
 
             # Use append() when available
-            if hasattr(self.file, 'append') and callable(self.file.append):
+            if callable(getattr(self.file, 'append', None)):
                 self.file.append(package.backend)
             else:
                 package.backend.initialize_reader()
