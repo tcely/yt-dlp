@@ -15,7 +15,7 @@ def get_suitable_downloader(info_dict, params={}, default=NO_DEFAULT, protocol=N
           and not (to_stdout and len(protocols) > 1)
           and set(protocols) == {'http_dash_segments_generator'}):
         return DashSegmentsFD
-    elif SabrFD is not None and set(downloaders) == {SabrFD} and SabrFD.can_download(info_copy):
+    elif set(downloaders) == {SabrFD} and SabrFD.can_download(info_copy):
         # NOTE: there may be one or more SABR downloaders for this info_dict,
         # as SABR can download multiple formats at once.
         return SabrFD
@@ -36,7 +36,6 @@ from .ism import IsmFD
 from .mhtml import MhtmlFD
 from .niconico import NiconicoLiveFD
 from .rtmp import RtmpFD
-from .rtsp import RtspFD
 from .websocket import WebSocketFragmentFD
 from .youtube_live_chat import YoutubeLiveChatFD
 from .bunnycdn import BunnyCdnFD
@@ -49,8 +48,6 @@ PROTOCOL_MAP = {
     'rtmp_ffmpeg': FFmpegFD,
     'm3u8_native': HlsFD,
     'm3u8': FFmpegFD,
-    'mms': RtspFD,
-    'rtsp': RtspFD,
     'f4m': F4mFD,
     'http_dash_segments': DashSegmentsFD,
     'http_dash_segments_generator': DashSegmentsFD,
