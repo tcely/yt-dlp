@@ -218,7 +218,7 @@ class SabrFdSession:
             caption_selector = CaptionSelector(
                 display_name=self.caption_format['display_name'], format_ids=[self.caption_format['format_id']])
             self.writers[caption_selector.display_name] = SabrFDFormatWriter(
-                self.fd, self.caption_format.get('filename'),
+                self.fd, self.caption_format.get('filename'), self.video_id,
                 self.caption_format['info_dict'], len(self.writers), resume=self.resume)
 
         return audio_selector, video_selector, caption_selector
