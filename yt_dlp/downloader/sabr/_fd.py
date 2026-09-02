@@ -1,11 +1,15 @@
 from __future__ import annotations
 import collections
+import contextlib
 import itertools
 import math
+import signal
+import time
 import typing
+from yt_dlp.globals import IN_CLI
 
 from yt_dlp.utils import traverse_obj, int_or_none, DownloadError, join_nonempty
-from yt_dlp.downloader import FileDownloader
+from ._base import SabrFDBase
 
 from ._writer import SabrFDFormatWriter
 from ._logger import create_sabrfd_logger
@@ -15,7 +19,7 @@ from yt_dlp.extractor.youtube._streaming.sabr.part import (
     MediaSegmentDataSabrPart,
     MediaSegmentInitSabrPart,
     FormatInitializedSabrPart,
-    LiveStateSabrPart,
+    BroadcastStateSabrPart,
 )
 from yt_dlp.extractor.youtube._streaming.sabr.stream import (
     SabrStream,
@@ -27,7 +31,8 @@ from yt_dlp.extractor.youtube._streaming.sabr.models import (
     AudioSelector,
     VideoSelector,
     CaptionSelector,
-    PoTokenStatus, ReloadConfigReason,
+    PoTokenStatus,
+    ReloadConfigReason,
 )
 from yt_dlp.extractor.youtube._streaming.sabr.exceptions import SabrStreamError, BroadcastIdChanged
 from yt_dlp.extractor.youtube._proto.innertube import ClientInfo, ClientName
@@ -43,14 +48,324 @@ if typing.TYPE_CHECKING:
     )
 
 
-class SabrFD(FileDownloader):
-    @classmethod
-    def can_download(cls, info_dict):
+USER_FORCE_QUIT_WINDOW_SEC = 2.0
+
+
+class SabrFdSession:
+    def __init__(
+        self,
+        fd: SabrFD,
+        video_id: str | None,
+        info_dict: dict,
+        video_format: dict | None,
+        audio_format: dict | None,
+        caption_format: dict | None,
+        resume: bool,
+        is_test: bool,
+        server_abr_streaming_url: str,
+        video_playback_ustreamer_config: str,
+        initial_po_token: str | None,
+        pot_callback: PotCallback | None,
+        reload_callback: ReloadCallback | None,
+        heartbeat_callback: HeartbeatCallback | None,
+        client_info: ClientInfo,
+        live_from_start: bool,
+        target_duration_sec: int | None,
+        live_status: str | None,
+    ):
+        self.fd = fd
+        self.video_id = video_id
+        self.info_dict = info_dict
+        self.video_format = video_format
+        self.audio_format = audio_format
+        self.caption_format = caption_format
+        self.resume = resume
+        self.is_test = is_test
+        self.live_from_start = live_from_start
+        self.target_duration_sec = target_duration_sec
+        self.live_status = live_status
+        self.writers: dict[str, SabrFDFormatWriter] = {}
+        self.stream = None
+        self._logged_dvr_message = False
+        # TODO(deep-rewind): remove when implemented
+        self._enable_broadcast_deep_rewind = traverse_obj(
+            self.fd.ydl.params, ('extractor_args', 'youtube', 'enable_live_deep_rewind', 0, {str}), get_all=False) == 'true'
+
+        # NOTE: the below may become outdated once callbacks are used
+        # Consider them the initial values
+        self.server_abr_streaming_url = server_abr_streaming_url
+        self.video_playback_ustreamer_config = video_playback_ustreamer_config
+        self.initial_po_token = initial_po_token
+        self.pot_callback = pot_callback
+        self.reload_callback = reload_callback
+        self.heartbeat_callback = heartbeat_callback
+        self.client_info = client_info
+
+    @property
+    def is_broadcast(self):
+        # is this a livestream broadcast (includes post_live and premieres)
         return (
-            info_dict.get('requested_formats')
-            and all(
-                format_info.get('protocol') == 'sabr'
-                for format_info in info_dict['requested_formats']))
+            self.live_status == 'is_live'
+            or (self.stream and self.stream.processor.is_broadcast)
+            or self.is_post_live)
+
+    @property
+    def is_post_live(self):
+        return self.live_status == 'post_live' or (self.stream and self.stream.processor.post_live)
+
+    def run(self):
+        audio_selector, video_selector, caption_selector = self._create_writers()
+
+        # Report the destination files before we start downloading instead of when we initialize the writers,
+        # as the formats may not all start at the same time (leading to messy output)
+        for writer in self.writers.values():
+            self.fd.report_destination(writer.filename)
+
+        start_time_ms = 0
+        if self.is_broadcast and not self.is_post_live and not self.live_from_start:
+            start_time_ms = JS_MAX_SAFE_INTEGER
+
+        if self._enable_broadcast_deep_rewind and self.is_broadcast:
+            self.fd.report_warning(
+                'Enabled broadcast deep rewind. This feature is under development and experimental. '
+                'Unexpected behavior may occur and the integrity of the downloaded files cannot be guaranteed.')
+
+        self.stream = SabrStream(
+            urlopen=self.fd.ydl.urlopen,
+            logger=create_sabrfd_logger(self.fd.ydl, prefix='sabr:stream'),
+            server_abr_streaming_url=self.server_abr_streaming_url,
+            video_playback_ustreamer_config=self.video_playback_ustreamer_config,
+            po_token=self.initial_po_token,
+            video_selection=video_selector,
+            audio_selection=audio_selector,
+            caption_selection=caption_selector,
+            start_time_ms=start_time_ms,
+            client_info=self.client_info,
+            broadcast_segment_target_duration_sec=self.target_duration_sec,
+            post_live=self.is_post_live,
+            video_id=self.video_id,
+            retry_sleep_func=self.fd.params.get('retry_sleep_functions', {}).get('http'),
+            http_retries=self.fd.params.get('retries'),
+            heartbeat_callback=self.heartbeat_callback,
+            pot_callback=self.pot_callback,
+            reload_callback=self.reload_callback,
+            enable_broadcast_deep_rewind=self._enable_broadcast_deep_rewind)
+
+        self.fd._prepare_multiline_status(len(self.writers) + 1)
+
+        original_handler = signal.getsignal(signal.SIGINT)
+        try:
+            if IN_CLI.value:
+                # Custom signal handler to allow graceful shutdown on Ctrl+C for livestreams
+                # Only used if running in the CLI to avoid conflicts with custom signal handlers
+                # that may be registered when using yt-dlp as a library.
+                signal.signal(signal.SIGINT, self._create_signal_handler())
+            self._download()
+        finally:
+            if IN_CLI.value:
+                signal.signal(signal.SIGINT, original_handler)
+
+            self.stream.close()
+            for writer in self.writers.values():
+                writer.close()
+
+            self.fd._finish_multiline_status()
+
+    # region: initialization
+    def _create_signal_handler(self):
+        # Allow livestreams to exit cleanly
+        last_interrupt_at = [0.0]
+
+        def handler(signum, frame):
+            if not self.is_broadcast or self.is_post_live:
+                raise KeyboardInterrupt
+
+            current_time = time.monotonic()
+            if last_interrupt_at[0] > 0.0 and (current_time - last_interrupt_at[0] <= USER_FORCE_QUIT_WINDOW_SEC):
+                raise KeyboardInterrupt
+
+            last_interrupt_at[0] = current_time
+            with self.fd.break_multiline():
+                self.fd.report_warning(
+                    'Interrupted by user. Finishing current segments and finalizing formats. Press Ctrl+C again to force quit.')
+            self.stream.close()
+
+        return handler
+
+    def _create_writers(self):
+        audio_selector = None
+        video_selector = None
+        caption_selector = None
+
+        if self.audio_format:
+            audio_selector = AudioSelector(
+                display_name=self.audio_format['display_name'], format_ids=[self.audio_format['format_id']])
+            self.writers[audio_selector.display_name] = SabrFDFormatWriter(
+                self.fd, self.audio_format.get('filename'), self.video_id,
+                self.audio_format['info_dict'], len(self.writers), resume=self.resume)
+
+        if self.video_format:
+            video_selector = VideoSelector(
+                display_name=self.video_format['display_name'],
+                format_ids=[self.video_format['format_id']],
+                # required for server to select hdr/non-hdr formats corrrectly for android/ios
+                prefer_hdr='HDR' in self.video_format['info_dict'].get('dynamic_range', 'SDR'))
+            self.writers[video_selector.display_name] = SabrFDFormatWriter(
+                self.fd, self.video_format.get('filename'), self.video_id,
+                self.video_format['info_dict'], len(self.writers), resume=self.resume)
+
+        if self.caption_format:
+            caption_selector = CaptionSelector(
+                display_name=self.caption_format['display_name'], format_ids=[self.caption_format['format_id']])
+            self.writers[caption_selector.display_name] = SabrFDFormatWriter(
+                self.fd, self.caption_format.get('filename'),
+                self.caption_format['info_dict'], len(self.writers), resume=self.resume)
+
+        return audio_selector, video_selector, caption_selector
+
+    # endregion
+
+    # region: download
+    def _download(self):
+        try:
+            for part in self.stream:
+                # check for --test
+                if self._should_stop():
+                    break
+                self._process_sabr_part(part)
+            self._finish_formats()
+        except BroadcastIdChanged as e:
+            # Core does not currently support multiple broadcasts under the same video ID.
+            self.fd.write_debug(f'[SABR Debug Info]: {self.stream.create_stats_str()}')
+            self.fd.write_debug(f'Got error: {e!r}')
+            self.fd.report_warning(
+                'The current stream download is complete, however a new stream may have started under the same video ID.')
+            self._finish_formats()
+        except SabrStreamError as e:
+            self.fd.write_debug(f'[SABR Debug Info]: {self.stream.create_stats_str()}')
+            raise DownloadError(str(e))
+
+    def _should_stop(self):
+        # check for --test
+        if not self.is_test:
+            return False
+        # TODO: this may be less than the first segment (partially for live) which means no segment available for ffmpeg merge
+        #  consider checking we get at least one segment of each enabled format?
+        return sum(writer.downloaded_bytes for writer in self.writers.values()) >= self.fd._TEST_FILE_SIZE
+
+    def _write_data_callback(self, part: MediaSegmentDataSabrPart):
+        writer = self.writers.get(part.format_selector.display_name)
+        if not writer:
+            self.fd.report_warning(f'Unknown data format selector: {part.format_selector}')
+            return
+        writer.write_segment_data(part)
+
+    def _process_sabr_part(self, part) -> None:
+        if isinstance(part, FormatInitializedSabrPart):
+            writer = self.writers.get(part.format_selector.display_name)
+            if not writer:
+                self.fd.report_warning(f'Unknown format selector: {part.format_selector}')
+                return
+
+            writer.initialize_format(part.format_id, self.stream.broadcast_id if self.is_broadcast else None)
+
+            # Resume format, if applicable
+            resume_state = writer.state
+            consumed_ranges = []
+            for sequence in resume_state.sequences:
+                consumed_ranges.append(ConsumedRange(
+                    start_time_ms=sequence.first_segment.start_time_ms,
+                    duration_ms=(sequence.last_segment.start_time_ms + sequence.last_segment.duration_ms) - sequence.first_segment.start_time_ms,
+                    start_sequence_number=sequence.first_segment.sequence_number,
+                    end_sequence_number=sequence.last_segment.sequence_number))
+            if resume_state.init_sequence or consumed_ranges:
+                self.stream.resume_format(
+                    part.format_id, consumed_ranges=consumed_ranges,
+                    has_init_segment=resume_state.init_sequence)
+                self.fd.to_screen(f'[download] Resuming download for format {part.format_selector.display_name}')
+
+        elif isinstance(part, MediaSegmentInitSabrPart):
+            writer = self.writers.get(part.format_selector.display_name)
+            if not writer:
+                self.fd.report_warning(f'Unknown init format selector: {part.format_selector}')
+                return
+            writer.initialize_segment(part)
+            part.register_data_callback(self._write_data_callback)
+
+        elif isinstance(part, MediaSegmentEndSabrPart):
+            writer = self.writers.get(part.format_selector.display_name)
+            if not writer:
+                self.fd.report_warning(f'Unknown end format selector: {part.format_selector}')
+                return
+            writer.end_segment(part)
+
+        elif isinstance(part, BroadcastStateSabrPart):
+            if not part.full_stream_available:
+                self._log_dvr_window_availability(part.available_dvr_window_ms)
+
+    def _log_dvr_window_availability(self, available_dvr_window_ms):
+        if self._logged_dvr_message:
+            return
+        hours = math.ceil(available_dvr_window_ms / (3600 * 1000))
+        if self.live_from_start:
+            if not hours:
+                self.fd.to_screen(
+                    '[download] Downloading from the live edge; the streamer has disabled DVR for this stream')
+            else:
+                self.fd.to_screen(
+                    f'[download] Downloading the past {hours} hour(s) of the live stream; full stream is not available')
+
+            # TODO(deep-rewind): proper logging, should not give DVR disabled message if can get segments
+            if self._enable_broadcast_deep_rewind:
+                self.fd.to_screen(
+                    '[download] Broadcast deep rewind is enabled, will attempt to download as early as possible')
+        else:
+            self.fd.to_screen(
+                '[download] Downloading from the live edge; pass --live-from-start to download from the beginning of the stream')
+        self._logged_dvr_message = True
+
+    # endregion
+
+    # region: finalization
+    def _count_writer_segments(self, writer):
+        return sum(
+            sequence.last_segment.sequence_number - sequence.first_segment.sequence_number + 1
+            if sequence.last_segment else 0
+            for sequence in writer.state.sequences)
+
+    def _finish_formats(self):
+        # Live and Post-Live formats should have the same segment count.
+        # If there is a mismatch, likely one format is missing segments.
+        # This usually only happens on resuming a livestream download, such as:
+        # - when the stream has no DVR
+        # - downloading from the start on a 12+ hour stream.
+        if len(self.writers) > 1 and self.is_broadcast:
+            expected_segment_count = None
+            for writer in self.writers.values():
+                segment_count = self._count_writer_segments(writer)
+                if expected_segment_count is None:
+                    expected_segment_count = segment_count
+                    continue
+                if segment_count != expected_segment_count:
+                    self.fd.report_warning(
+                        'Detected a segment alignment mismatch across downloaded formats. '
+                        'The formats may be out of sync in the merged file.',
+                        only_once=True)
+                    break
+                if segment_count == 0:
+                    # Should only occur for non-DVR livestreams if started at the edge after the stream ended.
+                    # Other cases should raise a stall error.
+                    self.fd.to_screen(f'[SABR Debug Info]: {self.stream.create_stats_str()}')
+                    self.fd.report_warning('[download] Did not receive data for one or more formats')
+                    break
+
+        for writer in self.writers.values():
+            writer.finish()
+
+    # endregion
+
+
+class SabrFD(SabrFDBase):
 
     def _client_info_from_json(self, client_info_json):
         return ClientInfo(
@@ -113,8 +428,7 @@ class SabrFD(FileDownloader):
                 'quality': sabr_config.get('quality'),
                 'height': sabr_config.get('height'),
                 'filename': f.get('filepath', filename),
-                'info_dict': f,
-            })
+                'info_dict': f})
 
         return format_groups
 
@@ -135,7 +449,9 @@ class SabrFD(FileDownloader):
                     traverse_obj(video_format, 'display_name'),
                     traverse_obj(caption_format, 'display_name')], delim='+')
                 self.write_debug(f'Downloading formats: {format_str} ({client_name} client)')
-                self._download_sabr_stream(
+                session = SabrFdSession(
+                    fd=self,
+                    video_id=format_group.get('video_id'),
                     info_dict=info_dict,
                     video_format=video_format,
                     audio_format=audio_format,
@@ -146,14 +462,13 @@ class SabrFD(FileDownloader):
                     video_playback_ustreamer_config=format_group['video_playback_ustreamer_config'],
                     initial_po_token=format_group['initial_po_token'],
                     pot_callback=self._create_pot_callback(format_group['fetch_po_token_fn']),
-                    heartbeat_callback=self._create_heartbeat_callback(format_group['extract_heartbeat_fn']),
                     reload_callback=self._create_reload_callback(format_group['reload_config_fn']),
+                    heartbeat_callback=self._create_heartbeat_callback(format_group['extract_heartbeat_fn']),
                     client_info=format_group['client_info'],
                     live_from_start=format_group['live_from_start'],
                     target_duration_sec=format_group.get('target_duration_sec', None),
-                    live_status=format_group.get('live_status'),
-                    video_id=format_group.get('video_id'),
-                )
+                    live_status=format_group.get('live_status'))
+                session.run()
         return True
 
     def _create_heartbeat_callback(self, extract_heartbeat_fn) -> HeartbeatCallback | None:
@@ -192,7 +507,7 @@ class SabrFD(FileDownloader):
                 if offline_slate and not display_endscreen and not offline_slate_actions:
                     logger.debug(
                         'Streamer disconnected - live stream is offline. '
-                        'Considering as live until terminal status is reached. ')
+                        'Considering as live until terminal status is reached.')
                     return Heartbeat(is_live=True, broadcast_id=broadcast_id, video_id=video_id)
                 elif lsr and (display_endscreen or offline_slate_actions):
                     # Otherwise, consider live stream offline
@@ -212,7 +527,6 @@ class SabrFD(FileDownloader):
                 return None
 
             # Cannot determine live status from heartbeat
-            # TODO(future): consider returning a heartbeat anyways with the broadcast id if we can extract it.
             logger.debug('Unknown status, not returning a heartbeat')
             return None
 
@@ -237,8 +551,7 @@ class SabrFD(FileDownloader):
                 client_info=self._client_info_from_json(sabr_config.get('client_info')),
                 pot_callback=self._create_pot_callback(sabr_config.get('fetch_po_token_fn')),
                 heartbeat_callback=self._create_heartbeat_callback(sabr_config.get('extract_heartbeat_fn')),
-                reload_callback=self._create_reload_callback(sabr_config.get('reload_config_fn')),
-            )
+                reload_callback=self._create_reload_callback(sabr_config.get('reload_config_fn')))
         return callback
 
     def _create_pot_callback(self, fetch_po_token_fn) -> PotCallback | None:
@@ -253,207 +566,6 @@ class SabrFD(FileDownloader):
                 bypass_cache=status in (PoTokenStatus.INVALID, PoTokenStatus.PENDING),
                 required=True)
         return callback
-
-    def _download_sabr_stream(
-        self,
-        video_id: str,
-        info_dict: dict,
-        video_format: dict,
-        audio_format: dict,
-        caption_format: dict,
-        resume: bool,
-        is_test: bool,
-        server_abr_streaming_url: str,
-        video_playback_ustreamer_config: str,
-        initial_po_token: str,
-        pot_callback: PotCallback = None,
-        reload_callback: ReloadCallback = None,
-        heartbeat_callback: HeartbeatCallback = None,
-        client_info: ClientInfo | None = None,
-        live_from_start: bool = False,
-        target_duration_sec: int | None = None,
-        live_status: str | None = None,
-    ):
-
-        writers = {}
-        audio_selector = None
-        video_selector = None
-        caption_selector = None
-        logged_dvr_message = False
-
-        if audio_format:
-            audio_selector = AudioSelector(
-                display_name=audio_format['display_name'], format_ids=[audio_format['format_id']])
-            writers[audio_selector.display_name] = SabrFDFormatWriter(
-                self, audio_format.get('filename'),
-                audio_format['info_dict'], len(writers), resume=resume)
-
-        if video_format:
-            video_selector = VideoSelector(
-                display_name=video_format['display_name'], format_ids=[video_format['format_id']])
-            writers[video_selector.display_name] = SabrFDFormatWriter(
-                self, video_format.get('filename'),
-                video_format['info_dict'], len(writers), resume=resume)
-
-        if caption_format:
-            caption_selector = CaptionSelector(
-                display_name=caption_format['display_name'], format_ids=[caption_format['format_id']])
-            writers[caption_selector.display_name] = SabrFDFormatWriter(
-                self, caption_format.get('filename'),
-                caption_format['info_dict'], len(writers), resume=resume)
-
-        # Report the destination files before we start downloading instead of when we initialize the writers,
-        # as the formats may not all start at the same time (leading to messy output)
-        for writer in writers.values():
-            self.report_destination(writer.filename)
-
-        start_time_ms = JS_MAX_SAFE_INTEGER if live_status == 'is_live' and not live_from_start else 0
-
-        stream = SabrStream(
-            urlopen=self.ydl.urlopen,
-            logger=create_sabrfd_logger(self.ydl, prefix='sabr:stream'),
-            server_abr_streaming_url=server_abr_streaming_url,
-            video_playback_ustreamer_config=video_playback_ustreamer_config,
-            po_token=initial_po_token,
-            video_selection=video_selector,
-            audio_selection=audio_selector,
-            caption_selection=caption_selector,
-            start_time_ms=start_time_ms,
-            client_info=client_info,
-            live_segment_target_duration_sec=target_duration_sec,
-            post_live=live_status == 'post_live',
-            video_id=video_id,
-            retry_sleep_func=self.params.get('retry_sleep_functions', {}).get('http'),
-            heartbeat_callback=heartbeat_callback,
-            pot_callback=pot_callback,
-            reload_callback=reload_callback,
-        )
-
-        self._prepare_multiline_status(len(writers) + 1)
-
-        try:
-            total_bytes = 0  # used for --test
-            for part in stream:
-                if is_test and total_bytes >= self._TEST_FILE_SIZE:
-                    break
-
-                elif isinstance(part, FormatInitializedSabrPart):
-                    writer = writers.get(part.format_selector.display_name)
-                    if not writer:
-                        self.report_warning(f'Unknown format selector: {part.format_selector}')
-                        continue
-
-                    writer.initialize_format(part.format_id, stream.broadcast_id if stream.processor.is_live else None)
-                    initialized_format = stream.processor.initialized_formats[str(part.format_id)]
-                    if writer.state.init_sequence:
-                        initialized_format.init_segment = True
-
-                    # Build consumed ranges from the sequences
-                    consumed_ranges = []
-                    for sequence in writer.state.sequences:
-                        consumed_ranges.append(ConsumedRange(
-                            start_time_ms=sequence.first_segment.start_time_ms,
-                            duration_ms=(sequence.last_segment.start_time_ms + sequence.last_segment.duration_ms) - sequence.first_segment.start_time_ms,
-                            start_sequence_number=sequence.first_segment.sequence_number,
-                            end_sequence_number=sequence.last_segment.sequence_number,
-                        ))
-                    if consumed_ranges:
-                        initialized_format.consumed_ranges = consumed_ranges
-                        self.to_screen(f'[download] Resuming download for format {part.format_selector.display_name}')
-
-                elif isinstance(part, MediaSegmentInitSabrPart):
-                    writer = writers.get(part.format_selector.display_name)
-                    if not writer:
-                        self.report_warning(f'Unknown init format selector: {part.format_selector}')
-                        continue
-                    writer.initialize_segment(part)
-
-                elif isinstance(part, MediaSegmentDataSabrPart):
-                    total_bytes += part.content_length
-                    writer = writers.get(part.format_selector.display_name)
-                    if not writer:
-                        self.report_warning(f'Unknown data format selector: {part.format_selector}')
-                        continue
-                    writer.write_segment_data(part)
-
-                elif isinstance(part, MediaSegmentEndSabrPart):
-                    writer = writers.get(part.format_selector.display_name)
-                    if not writer:
-                        self.report_warning(f'Unknown end format selector: {part.format_selector}')
-                        continue
-                    writer.end_segment(part)
-
-                elif isinstance(part, LiveStateSabrPart):
-                    if not logged_dvr_message and not part.full_stream_available:
-                        self._log_dvr_window_availability(part.available_dvr_window_ms, live_from_start)
-                        logged_dvr_message = True
-
-            self._finish_formats(writers, is_live=stream.processor.is_live)
-        except BroadcastIdChanged as e:
-            # Core does not currently support multiple broadcasts under the same video ID.
-            self.write_debug(f'[SABR Debug Info]: {stream.create_stats_str()}')
-            self.write_debug(f'Got error: {e!r}')
-            self.report_warning(
-                'The current stream download is complete, however a new stream may have started under the same video ID.')
-            self._finish_formats(writers, is_live=stream.processor.is_live)
-        except SabrStreamError as e:
-            self.write_debug(f'[SABR Debug Info]: {stream.create_stats_str()}')
-            raise DownloadError(str(e)) from e
-        except KeyboardInterrupt:
-            if (
-                not info_dict.get('is_live')
-                and not live_status == 'is_live'
-                and not stream.processor.is_live
-            ):
-                raise
-            self.to_screen('Interrupted by user')
-            self._finish_formats(writers, is_live=stream.processor.is_live)
-        finally:
-            # TODO: for livestreams, since we cannot resume them, should we finish the writers?
-            stream.close()
-            for writer in writers.values():
-                writer.close()
-
-    def _count_writer_segments(self, writer):
-        return sum(
-            sequence.last_segment.sequence_number - sequence.first_segment.sequence_number + 1
-            for sequence in writer.state.sequences)
-
-    def _finish_formats(self, writers, is_live=False):
-        # Live formats should have the same segment count.
-        # If there is a mismatch, likely one format is missing segments.
-        # This usually only happens on resuming a livestream download, such as:
-        # - when the stream has no DVR
-        # - downloading from the start on a 12+ hour stream.
-        if len(writers) > 1 and is_live:
-            expected_segment_count = None
-            for writer in writers.values():
-                segment_count = self._count_writer_segments(writer)
-                if expected_segment_count is None:
-                    expected_segment_count = segment_count
-                    continue
-                if segment_count != expected_segment_count:
-                    self.report_warning(
-                        'Detected a segment alignment mismatch across downloaded formats. '
-                        'The formats may be out of sync in the merged file.',
-                        only_once=True)
-                    break
-
-        for writer in writers.values():
-            writer.finish()
-
-    def _log_dvr_window_availability(self, available_dvr_window_ms, live_from_start):
-        hours = math.ceil(available_dvr_window_ms / (3600 * 1000))
-        if live_from_start:
-            if not hours:
-                self.to_screen(
-                    '[download] Downloading from the live edge; the streamer has disabled DVR for this stream')
-            else:
-                self.to_screen(
-                    f'[download] Downloading the past {hours} hour(s) of the live stream; full stream is not available')
-        else:
-            self.to_screen(
-                '[download] Downloading from the live edge; pass --live-from-start to download from the beginning of the stream')
 
     def _report_pot_callback_unavailable(self):
         self.report_warning(
@@ -473,6 +585,18 @@ class SabrFD(FileDownloader):
         elif reason == ReloadConfigReason.SABR_RELOAD_PLAYER_RESPONSE:
             msg += ' as requested by the server'
         self.to_screen(msg)
+
+    @contextlib.contextmanager
+    def break_multiline(self):
+        # TODO: implement proper multiline-break solution for all logs
+        # Temporary suppress the multiline status while printing other messages,
+        # to avoid messing up the display or losing the message
+        lines = self._multiline.maximum + 1
+        self._finish_multiline_status()
+        try:
+            yield
+        finally:
+            self._prepare_multiline_status(lines)
 
 
 def format_type(f):

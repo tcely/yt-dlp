@@ -7,11 +7,16 @@ import protobug
 from yt_dlp.extractor.youtube._proto.videostreaming import MediaHeader
 from yt_dlp.extractor.youtube._proto.videostreaming import FormatId
 from yt_dlp.extractor.youtube._streaming.sabr.models import AudioSelector, VideoSelector
-from yt_dlp.extractor.youtube._streaming.sabr.part import FormatInitializedSabrPart, MediaSegmentInitSabrPart, MediaSegmentDataSabrPart, MediaSegmentEndSabrPart
+from yt_dlp.extractor.youtube._streaming.sabr.part import (
+    FormatInitializedSabrPart,
+    MediaSegmentInitSabrPart,
+    MediaSegmentDataSabrPart,
+    MediaSegmentEndSabrPart,
+)
 from yt_dlp.extractor.youtube._streaming.ump import UMPPart, UMPPartId
 from yt_dlp.networking.exceptions import TransportError
 
-# Test that our test assertion helper works correctly...
+# sanity check that our test assertion helper works correctly...
 
 
 class TestAssertMediaSequence:
@@ -58,7 +63,7 @@ class TestAssertMediaSequence:
         fmt = FormatId(itag=140, lmt=123)
         parts = [
             MediaSegmentInitSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1, total_segments=1),
-            MediaSegmentDataSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=2, data=b'd_wrong'),
+            MediaSegmentDataSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=2, data=b'd2'),
             MediaSegmentEndSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1),
         ]
         with pytest.raises(AssertionError, match='Media segment data part sequence number mismatch'):
@@ -84,12 +89,28 @@ class TestAssertMediaSequence:
         parts = [
             MediaSegmentInitSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1, total_segments=1),
             MediaSegmentDataSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1, data=b'd1'),
-            # Retried init for same sequence (simulates server resending); allowed when allow_retry=True
+            # Retry init for same sequence (simulates server resending), which is allowed with allow_retry=True
             MediaSegmentInitSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1, total_segments=1),
             MediaSegmentDataSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1, data=b'd1'),
             MediaSegmentEndSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1),
         ]
         assert_media_sequence_in_order(parts, audio_selector, expected_total_segments=1, allow_retry=True)
+
+    def test_retry_init_allowed(self):
+        # should allow a retry on the init segment
+        audio_selector = AudioSelector(display_name='audio')
+        fmt = FormatId(itag=140, lmt=123)
+        parts = [
+            MediaSegmentInitSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=None, is_init_segment=True, total_segments=1),
+            # Retry init for same sequence (simulates server resending), which is allowed with allow_retry=True
+            MediaSegmentInitSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=None, is_init_segment=True, total_segments=1),
+            MediaSegmentDataSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=None, is_init_segment=True, total_segments=1, data=b'd1'),
+            MediaSegmentEndSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=None, is_init_segment=True, total_segments=1),
+            MediaSegmentInitSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1, total_segments=1),
+            MediaSegmentDataSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1, data=b'd1'),
+            MediaSegmentEndSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1),
+        ]
+        assert_media_sequence_in_order(parts, audio_selector, expected_total_segments=2, allow_retry=True)
 
     def test_retry_not_allowed_raises(self):
         # Disallow retry where an init with the same sequence_number appears again
@@ -98,7 +119,7 @@ class TestAssertMediaSequence:
         parts = [
             MediaSegmentInitSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1, total_segments=1),
             MediaSegmentDataSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1, data=b'd1'),
-            # Retried init for same sequence (simulates server resending); should raise when allow_retry=False
+            # Retry init for same sequence (simulates server resending), which is allowed with allow_retry=True
             MediaSegmentInitSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1, total_segments=1),
             MediaSegmentDataSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1, data=b'd1'),
             MediaSegmentEndSabrPart(format_selector=audio_selector, format_id=fmt, sequence_number=1),
@@ -111,7 +132,7 @@ class TestCreateInjectReadError:
     def make_part(self, part_id: UMPPartId, payload: bytes = b'x'):
         return UMPPart(part_id=part_id, size=len(payload), data=io.BytesIO(payload))
 
-    def test_no_injection_when_request_number_not_matched(self):
+    def test_request_number_not_matched(self):
         parts = [self.make_part(UMPPartId.MEDIA), self.make_part(UMPPartId.MEDIA_END)]
         injector = create_inject_read_error(request_numbers=[2], part_id=UMPPartId.MEDIA, occurance=1)
 
@@ -125,7 +146,7 @@ class TestCreateInjectReadError:
 
         returned = injector(parts, vpabr=None, url='http://example/', request_number=2)
 
-        # Should have exactly one injected TransportError and list length +1
+        # Should have exactly one injected TransportError
         assert any(isinstance(p, TransportError) for p in returned)
         assert sum(1 for p in returned if isinstance(p, TransportError)) == 1
         assert len(returned) == len(parts) + 1
@@ -153,7 +174,7 @@ class TestCreateInjectReadError:
 
         returned = injector(parts, vpabr=None, url='http://example/', request_number=2)
 
-        # No TransportError injected because occurance (5) not reached
+        # No TransportError injected because occurrence not reached
         assert all(not isinstance(p, TransportError) for p in returned)
         assert returned == parts
 
@@ -162,20 +183,19 @@ def test_mock_time():
     import time as _time
     from .helpers import mock_time
 
-    # Decorated function should not actually sleep (fast) and should advance the fake clock
     start = _time.perf_counter()
 
     @mock_time
     def _inner():
-        t0 = _time.time()
+        t = _time.time()
         _time.sleep(1.5)
-        assert _time.time() == pytest.approx(t0 + 1.5)
+        assert _time.time() == pytest.approx(t + 1.5)
 
     _inner()
     inner_duration = _time.perf_counter() - start
     assert inner_duration < 0.1, 'decorated function should not perform a real sleep'
 
-    # After decorator returns, original time.sleep should be restored (real sleep observable)
+    # original time.sleep should be restored
     t_before = _time.perf_counter()
     _time.sleep(0.02)
     elapsed = _time.perf_counter() - t_before

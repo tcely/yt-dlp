@@ -193,7 +193,7 @@ class SabrResponseProcessor:
         audio_buffered_segments = self.buffered_segments(vpabr, total_audio_segments, audio_format_id)
         video_buffered_segments = self.buffered_segments(vpabr, total_video_segments, video_format_id)
 
-        if audio_format_id and not audio_buffered_segments:
+        if audio_format_id and not audio_buffered_segments and audio_format_id not in vpabr.initialized_format_ids:
             fim = protobug.dumps(FormatInitializationMetadata(
                 video_id=VIDEO_ID,
                 format_id=audio_format_id,
@@ -209,7 +209,7 @@ class SabrResponseProcessor:
                 data=io.BytesIO(fim),
             ))
 
-        if video_format_id and not video_buffered_segments:
+        if video_format_id and not video_buffered_segments and video_format_id not in vpabr.initialized_format_ids:
             fim = protobug.dumps(FormatInitializationMetadata(
                 video_id=VIDEO_ID,
                 format_id=video_format_id,
@@ -358,6 +358,7 @@ class BasicAudioVideoProfile(SabrResponseProcessor):
                 player_time_ms=vpabr.client_abr_state.player_time_ms,
                 start_header_id=next_header_id,
                 format_id=audio_format_id,
+                skip_init=audio_format_id in vpabr.initialized_format_ids,
             )
             parts.extend(audio_segment_parts)
 
@@ -369,6 +370,7 @@ class BasicAudioVideoProfile(SabrResponseProcessor):
                 player_time_ms=vpabr.client_abr_state.player_time_ms,
                 start_header_id=next_header_id,
                 format_id=video_format_id,
+                skip_init=video_format_id in vpabr.initialized_format_ids,
             )
             parts.extend(video_segment_parts)
 
@@ -617,11 +619,9 @@ class LiveAVProfile(BasicAudioVideoProfile):
         return self.options.get('live_head_always_available', self.DEFAULT_LIVE_HEAD_ALWAYS_AVAILABLE)
 
     def segment_duration_ms(self, segment_number):
-        # variation = 270 if segment_number % 2 == 0 else -256
         return self.segment_target_duration_ms
 
     def segment_length(self, segment_number):
-        # variation = 256 if segment_number % 2 == 0 else -512
         return self.DEFAULT_TARGET_SEGMENT_LENGTH + 0
 
     @property
@@ -753,8 +753,8 @@ class LiveAVProfile(BasicAudioVideoProfile):
             # Basic server-side buffering logic to determine if the segment should be included
             # If not within 1 target segment of this segment, skip
             if (
-                (player_time_ms < start_ms - self.segment_target_duration_ms + segment_buffer_window_offset)
-                or (player_time_ms > start_ms + self.segment_target_duration_ms - segment_buffer_window_offset)
+                (player_time_ms < start_ms - self.segment_target_duration_ms - segment_buffer_window_offset)
+                or (player_time_ms > start_ms + self.segment_target_duration_ms + segment_buffer_window_offset)
             ):
                 continue
 
@@ -897,7 +897,10 @@ class SkipSegmentProfile(BasicAudioVideoProfile):
         return init_segments + segments, start_header_id
 
 
-def assert_media_sequence_in_order(parts, format_selector: AudioSelector | VideoSelector, expected_total_segments: int, allow_retry=False, start_sequence_number=1, check_segment_total_segments=True):
+def assert_media_sequence_in_order(
+        parts, format_selector: AudioSelector | VideoSelector,
+        expected_total_segments: int, allow_retry=False, start_sequence_number=1,
+        check_segment_total_segments=True):
     # Checks that for the given format_selector, the media segments are in order:
     # MediaSegmentInitSabrPart -> MediaSegmentDataSabrPart* -> MediaSegmentEndSabrPart
 
@@ -913,7 +916,15 @@ def assert_media_sequence_in_order(parts, format_selector: AudioSelector | Video
                     if not allow_retry:
                         assert current_segment[2] is not None, 'Previous Media segment end part missing'
                     if current_segment[0].sequence_number is None:
-                        assert part.sequence_number == start_sequence_number, f'Segment after init part should be sequence number {start_sequence_number}'
+                        if allow_retry:
+                            assert (
+                                part.sequence_number == start_sequence_number
+                                or part.is_init_segment
+                            ), f'Segment after init part should be sequence number {start_sequence_number} or an init part on retry'
+                            if part.is_init_segment:
+                                total_retried_segments += 1
+                        else:
+                            assert part.sequence_number == start_sequence_number, f'Segment after init part should be sequence number {start_sequence_number}'
                     elif not allow_retry:
                         assert part.sequence_number == current_segment[0].sequence_number + 1, 'Media segment init part sequence number out of order'
                     else:
@@ -1046,3 +1057,32 @@ def setup_sabr_stream_av(
 class Respond403Processor(SabrResponseProcessor):
     def process_request(self, data: bytes, url: str, request_number: int) -> tuple[VideoPlaybackAbrRequest | None, list[UMPPart | Exception], int]:
         return None, [], 403
+
+
+def handle_media_init_part(part, parts, callback_state=None, read=True):
+    if not isinstance(part, MediaSegmentInitSabrPart):
+        return
+
+    # used to disable previous callbacks to ensure the correct one is called
+    callback_generation = None
+    if callback_state is not None:
+        callback_generation = callback_state.get('generation', 0) + 1
+        callback_state['generation'] = callback_generation
+
+    def data_callback(part):
+        if callback_state is not None and callback_generation != callback_state.get('generation'):
+            raise AssertionError('wrong callback called')
+        if read:
+            part.data.read()
+        parts.append(part)
+
+    part.register_data_callback(data_callback)
+
+
+def collect_parts(iterable):
+    parts = []
+    callback_state = {'generation': 0}
+    for part in iterable:
+        handle_media_init_part(part, parts, callback_state)
+        parts.append(part)
+    return parts

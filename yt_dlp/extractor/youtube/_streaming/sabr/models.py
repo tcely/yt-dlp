@@ -3,8 +3,10 @@ from __future__ import annotations
 import dataclasses
 import enum
 
-from yt_dlp.extractor.youtube._proto.videostreaming import FormatId
+from yt_dlp.extractor.youtube._proto.videostreaming import AdCuepointConfig, FormatId
 from yt_dlp.extractor.youtube.pot._provider import IEContentProviderLogger
+
+SabrLogger = IEContentProviderLogger
 
 
 @dataclasses.dataclass
@@ -28,7 +30,7 @@ class Segment:
 
 @dataclasses.dataclass
 class ConsumedRange:
-    start_sequence_number: int
+    start_sequence_number: int | None
     end_sequence_number: int
     start_time_ms: int
     duration_ms: int
@@ -46,16 +48,13 @@ class InitializedFormat:
     seek_ms: int | None = None
     # Previous segment received for the format. If not seeking, this should be in order.
     previous_segment: Segment | None = None
-    init_segment: Segment | None | bool = None
+    init_segment: Segment | bool | None = None
     consumed_ranges: list[ConsumedRange] = dataclasses.field(default_factory=list)
     last_segment_number: int = None
     # Whether we should discard any data received for this format
     discard: bool = False
     sequence_lmt: int | None = None
     expected_start_sequence_number: int | None = None
-
-
-SabrLogger = IEContentProviderLogger
 
 
 @dataclasses.dataclass
@@ -68,12 +67,10 @@ class FormatSelector:
     def match(self, format_id: FormatId = None, mime_type: str | None = None, **kwargs) -> bool:
         return (
             format_id in self.format_ids
-            or (
+            or bool(
                 not self.format_ids
                 and self.mime_prefix
-                and mime_type and mime_type.lower().startswith(self.mime_prefix)
-            )
-        )
+                and mime_type and mime_type.lower().startswith(self.mime_prefix)))
 
 
 @dataclasses.dataclass
@@ -84,6 +81,7 @@ class AudioSelector(FormatSelector):
 @dataclasses.dataclass
 class VideoSelector(FormatSelector):
     mime_prefix: str = dataclasses.field(default='video')
+    prefer_hdr: bool = dataclasses.field(default=False)
 
 
 @dataclasses.dataclass
@@ -103,3 +101,17 @@ class PoTokenStatus(enum.Enum):
 class ReloadConfigReason(enum.Enum):
     SABR_URL_EXPIRY = enum.auto()
     SABR_RELOAD_PLAYER_RESPONSE = enum.auto()
+
+
+@dataclasses.dataclass
+class BroadcastState:
+    head_sequence_number: int = None
+    head_sequence_time_ms: int = None
+    min_seekable_time_ms: int = None
+    max_seekable_time_ms: int = None
+
+
+@dataclasses.dataclass
+class AdCuepoint:
+    cuepoint_config: AdCuepointConfig
+    cuepoint_end_ms: int | None

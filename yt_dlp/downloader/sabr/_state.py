@@ -20,8 +20,8 @@ class SabrStateSegment:
 class SabrStateSequence:
     sequence_start_number: protobug.Int32 = protobug.field(1)
     sequence_content_length: protobug.Int64 = protobug.field(2)
-    first_segment: SabrStateSegment = protobug.field(3)
-    last_segment: SabrStateSegment = protobug.field(4)
+    first_segments: list[SabrStateSegment] = protobug.field(3, default_factory=list)
+    last_segments: list[SabrStateSegment] = protobug.field(4, default_factory=list)
 
 
 @protobug.message
@@ -32,9 +32,10 @@ class SabrStateInitSegment:
 @protobug.message
 class SabrState:
     format_id: FormatId = protobug.field(1)
-    init_segment: SabrStateInitSegment | None = protobug.field(2, default=None)
-    sequences: list[SabrStateSequence] = protobug.field(3, default_factory=list)
-    broadcast_id: protobug.String | None = protobug.field(4, default=None)
+    video_id: protobug.String = protobug.field(2)
+    init_segment: SabrStateInitSegment | None = protobug.field(3, default=None)
+    sequences: list[SabrStateSequence] = protobug.field(4, default_factory=list)
+    broadcast_id: protobug.String | None = protobug.field(5, default=None)
 
 
 class SabrStateFile:
@@ -62,7 +63,7 @@ class SabrStateFile:
             os.fsync(tf.fileno())
 
         try:
-            os.replace(tf.name, self.filename)
+            self.fd.try_rename(tf.name, self.filename)
         finally:
             if os.path.exists(tf.name):
                 with contextlib.suppress(FileNotFoundError, OSError):

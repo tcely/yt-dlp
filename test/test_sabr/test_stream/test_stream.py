@@ -18,6 +18,8 @@ from test.test_sabr.test_stream.helpers import (
     VALID_SABR_URL,
     setup_sabr_stream_av,
     DEFAULT_VIDEO_FORMAT,
+    collect_parts,
+    handle_media_init_part,
 )
 from yt_dlp.extractor.youtube._proto.videostreaming.reload_player_response import ReloadPlaybackParams
 from yt_dlp.extractor.youtube._streaming.sabr.exceptions import (
@@ -40,6 +42,7 @@ from yt_dlp.extractor.youtube._streaming.sabr.models import (
 from yt_dlp.extractor.youtube._streaming.sabr.part import (
     FormatInitializedSabrPart,
     MediaSegmentInitSabrPart,
+    MediaSegmentDataSabrPart, MediaSegmentEndSabrPart,
 )
 from yt_dlp.extractor.youtube._streaming.sabr.stream import SabrStream, ReloadConfigRequest
 from yt_dlp.extractor.youtube._proto.videostreaming import (
@@ -64,7 +67,7 @@ class TestStream:
 
         audio_selector, video_selector = selectors
 
-        parts = list(sabr_stream.iter_parts())
+        parts = collect_parts(sabr_stream)
 
         # 1. Check we got two format initialization metadata parts for the two formats.
         format_init_parts = [part for part in parts if isinstance(part, FormatInitializedSabrPart)]
@@ -94,7 +97,7 @@ class TestStream:
             enable_video=False,
         )
         audio_selector, _ = selectors
-        parts = list(sabr_stream.iter_parts())
+        parts = collect_parts(sabr_stream)
 
         format_init_parts = [part for part in parts if isinstance(part, FormatInitializedSabrPart)]
         assert len(format_init_parts) == 1
@@ -126,7 +129,7 @@ class TestStream:
             enable_audio=False,
         )
         _, video_selector = selectors
-        parts = list(sabr_stream.iter_parts())
+        parts = collect_parts(sabr_stream)
 
         format_init_parts = [part for part in parts if isinstance(part, FormatInitializedSabrPart)]
         assert len(format_init_parts) == 1
@@ -156,6 +159,73 @@ class TestStream:
         logger.trace.assert_any_call(
             'All enabled formats have reached their last expected segment at player time 10001 ms, assuming end of vod.')
 
+    def test_all_formats_discarded(self, logger, client_info):
+        # Should end the stream after single successful request if all formats are marked as discarded
+        sabr_stream, rh, _ = setup_sabr_stream_av(
+            sabr_response_processor=BasicAudioVideoProfile(),
+            client_info=client_info,
+            logger=logger,
+            enable_audio=False,
+            enable_video=False,
+        )
+        parts = collect_parts(sabr_stream)
+        assert parts == []
+
+        assert sabr_stream.processor.player_time_ms == 0
+        logger.debug.assert_any_call('Skipping player time increment; no enabled formats')
+        logger.debug.assert_any_call('End of stream (no enabled formats)')
+
+        assert len(rh.request_history) == 1
+
+    def test_media_no_data_callback_registered(self, logger, client_info):
+        # should raise a warning when receive data for a header that has no data callback registered
+        sabr_stream, _, _ = setup_sabr_stream_av(
+            sabr_response_processor=BasicAudioVideoProfile(),
+            client_info=client_info,
+            logger=logger,
+            enable_audio=False,
+        )
+        parts = list(sabr_stream.iter_parts())
+
+        # should have no data parts
+        assert all(not isinstance(part, MediaSegmentDataSabrPart) for part in parts)
+
+        logger.warning.assert_any_call('No data callback registered for header ID 1.')
+
+    def test_error_media_data_callback_registered_out_of_order(self, logger, client_info):
+        # should error if the data callback was registered too late
+        sabr_stream, _, _ = setup_sabr_stream_av(
+            sabr_response_processor=BasicAudioVideoProfile(),
+            client_info=client_info,
+            logger=logger,
+            enable_audio=False,
+        )
+        parts = list(sabr_stream.iter_parts())
+
+        first_media_init_part = next(part for part in parts if isinstance(part, MediaSegmentInitSabrPart))
+
+        with pytest.raises(ValueError, match='Data callback registration expired'):
+            first_media_init_part.register_data_callback(lambda data: None)
+
+        logger.warning.assert_any_call('Data callback registration called for a previous request 6 (expected 1)')
+
+    def test_clear_media_data_callback_media_end(self, logger, client_info):
+        # should remove the data callback on media end
+        sabr_stream, _, _ = setup_sabr_stream_av(
+            sabr_response_processor=BasicAudioVideoProfile(),
+            client_info=client_info,
+            logger=logger,
+            enable_audio=False,
+        )
+        parts = []
+        for part in sabr_stream.iter_parts():
+            handle_media_init_part(part, parts)
+            if isinstance(part, MediaSegmentInitSabrPart):
+                assert len(sabr_stream._data_callbacks) == 1
+            elif isinstance(part, MediaSegmentEndSabrPart):
+                assert len(sabr_stream._data_callbacks) == 0
+            parts.append(part)
+
     def test_set_preferred_format_ids(self, logger, client_info):
         # If format_ids are present in the format selector, then the preferred format ids should be set
         sabr_stream, rh, _ = setup_sabr_stream_av(
@@ -165,7 +235,7 @@ class TestStream:
             enable_audio=True,
             select_with_format_id=True,
         )
-        list(sabr_stream.iter_parts())
+        collect_parts(sabr_stream)
         assert rh.request_history[0].vpabr.preferred_audio_format_ids == [DEFAULT_AUDIO_FORMAT]
         assert rh.request_history[0].vpabr.preferred_video_format_ids == [DEFAULT_VIDEO_FORMAT]
 
@@ -185,7 +255,7 @@ class TestStream:
             logger=logger,
             start_time_ms=100000,
         )
-        parts = list(sabr_stream.iter_parts())
+        parts = collect_parts(sabr_stream)
         assert len(parts) == 2  # Only format init parts
         assert all(isinstance(part, FormatInitializedSabrPart) for part in parts)
         assert len(rh.request_history) == 1
@@ -212,6 +282,7 @@ class TestStream:
             if audio_izf:
                 assert audio_izf.discard is True
                 audio_izf.consumed_ranges = []
+            handle_media_init_part(part, parts)
             parts.append(part)
 
         # sanity checking we only get video-only segments
@@ -240,7 +311,7 @@ class TestStream:
             logger=logger,
         )
 
-        list(sabr_stream.iter_parts())
+        collect_parts(sabr_stream)
         assert len(rh.request_history) == 6
 
         # First empty request
@@ -559,7 +630,7 @@ class TestStream:
         # Make the server change the audio format ID on the next request
         processor.options['default_audio_format'] = FormatId(itag=141, lmt=789)
         # Continue retrieving parts; should not raise
-        parts.extend(parts_iter)
+        parts.extend(collect_parts(parts_iter))
         assert_media_sequence_in_order(parts, video_selector, DEFAULT_NUM_VIDEO_SEGMENTS + 1)
 
         # Should not be any audio parts
@@ -576,7 +647,7 @@ class TestStream:
             client_info=client_info,
             logger=logger,
         )
-        list(sabr_stream.iter_parts())
+        collect_parts(sabr_stream)
         assert len(rh.request_history) == 6
         for idx, request_details in enumerate(rh.request_history):
             expected_rn = str(idx + 1)
@@ -590,7 +661,7 @@ class TestStream:
             client_info=client_info,
             logger=logger,
         )
-        list(sabr_stream.iter_parts())
+        collect_parts(sabr_stream)
         assert len(rh.request_history) == 6
         for request_details in rh.request_history:
             request = request_details.request
@@ -608,7 +679,7 @@ class TestStream:
         audio_selector, video_selector = selectors
 
         assert sabr_stream.url == VALID_SABR_URL
-        parts = list(sabr_stream.iter_parts())
+        parts = collect_parts(sabr_stream)
         assert_media_sequence_in_order(parts, audio_selector, DEFAULT_NUM_AUDIO_SEGMENTS + 1)
         assert_media_sequence_in_order(parts, video_selector, DEFAULT_NUM_VIDEO_SEGMENTS + 1)
 
@@ -653,12 +724,14 @@ class TestStream:
         parts = []
         parts_iter = sabr_stream.iter_parts()
         while len(rh.request_history) < 4:
-            parts.append(next(parts_iter))
+            part = next(parts_iter)
+            handle_media_init_part(part, parts)
+            parts.append(part)
         # Update the URL
         sabr_stream.url = new_sabr_url
         assert sabr_stream.url == new_sabr_url
         # Continue retrieving parts
-        parts.extend(list(parts_iter))
+        parts.extend(collect_parts(parts_iter))
         assert_media_sequence_in_order(parts, audio_selector, DEFAULT_NUM_AUDIO_SEGMENTS + 1)
         assert_media_sequence_in_order(parts, video_selector, DEFAULT_NUM_VIDEO_SEGMENTS + 1)
 
@@ -683,7 +756,7 @@ class TestStream:
         sabr_stream.close()
 
         with pytest.raises(SabrStreamConsumedError, match='SABR stream has already been consumed'):
-            list(sabr_stream.iter_parts())
+            collect_parts(sabr_stream)
         assert not rh.request_history
 
     def test_create_stats_str_vod(self, logger, client_info):
@@ -696,7 +769,7 @@ class TestStream:
 
         initial_str = sabr_stream.create_stats_str()
         assert initial_str == 'v:unknown c:WEB t:0 h:test exp:n/a rn:0 sr:0 act:N pot:N sps:n/a vod if:[none] cr:[none]'
-        list(sabr_stream.iter_parts())
+        collect_parts(sabr_stream)
 
         final_str = sabr_stream.create_stats_str()
         assert final_str == 'v:unknown c:WEB t:10001 h:test exp:n/a rn:6 sr:0 act:Y pot:N sps:n/a vod if:[140(5), 248(10)] cr:[140:1-5 (0-10001), 248:1-10 (0-10001)]'
@@ -712,7 +785,7 @@ class TestStream:
 
         initial_str = sabr_stream.create_stats_str()
         assert initial_str == 'v:unknown c:WEB t:0 h:test exp:n/a rn:0 sr:0 act:N pot:N sps:n/a vod if:[none] cr:[none]'
-        list(sabr_stream.iter_parts())
+        collect_parts(sabr_stream)
 
         final_str = sabr_stream.create_stats_str()
         assert final_str == 'v:unknown c:WEB t:10001 h:test exp:n/a rn:6 sr:0 act:Y pot:N sps:n/a vod if:[140d(5), 248(10)] cr:[140:0-9007199254740991 (0-9007199254740991), 248:1-10 (0-10001)]'
@@ -726,7 +799,7 @@ class TestStream:
             logger=logger,
         )
         initial_stats = sabr_stream.create_stats_str()
-        list(sabr_stream.iter_parts())
+        collect_parts(sabr_stream)
         with pytest.raises(AssertionError):
             logger.debug.assert_any_call(f'[SABR State] {initial_stats}')
 
@@ -739,7 +812,7 @@ class TestStream:
             logger=logger,
         )
         initial_stats = sabr_stream.create_stats_str()
-        list(sabr_stream.iter_parts())
+        collect_parts(sabr_stream)
 
         # should print stats during the stream
         logger.debug.assert_any_call(f'[SABR State] {initial_stats}')
@@ -755,11 +828,11 @@ class TestStream:
             client_info=client_info,
             logger=logger,
         )
-        list(sabr_stream.iter_parts())
+        collect_parts(sabr_stream)
 
         # Further attempts to iterate should raise
         with pytest.raises(SabrStreamConsumedError):
-            list(sabr_stream.iter_parts())
+            collect_parts(sabr_stream)
 
     def test_close_mid_iteration_stops(self, logger, client_info):
         # Closing the stream mid-iteration should mark the stream as consumed
@@ -791,7 +864,20 @@ class TestStream:
         )
         audio_selector, video_selector = selectors
 
-        parts = list(sabr_stream)
+        parts = collect_parts(sabr_stream)
+        assert_media_sequence_in_order(parts, audio_selector, DEFAULT_NUM_AUDIO_SEGMENTS + 1)
+        assert_media_sequence_in_order(parts, video_selector, DEFAULT_NUM_VIDEO_SEGMENTS + 1)
+
+    def test_iter_parts(self, logger, client_info):
+        # SabrStream.iter_parts should return an iterator
+        sabr_stream, _, selectors = setup_sabr_stream_av(
+            sabr_response_processor=BasicAudioVideoProfile(),
+            client_info=client_info,
+            logger=logger,
+        )
+        audio_selector, video_selector = selectors
+
+        parts = collect_parts(sabr_stream.iter_parts())
         assert_media_sequence_in_order(parts, audio_selector, DEFAULT_NUM_AUDIO_SEGMENTS + 1)
         assert_media_sequence_in_order(parts, video_selector, DEFAULT_NUM_VIDEO_SEGMENTS + 1)
 
@@ -825,7 +911,7 @@ class TestStream:
             logger=logger,
         )
         with pytest.raises(InvalidSabrUrl, match=r'Invalid SABR URL:'):
-            list(sabr_stream.iter_parts())
+            collect_parts(sabr_stream)
 
         assert sabr_stream.url == VALID_SABR_URL
 
@@ -838,7 +924,7 @@ class TestStream:
             url=valid_live_url_with_source,
         )
         assert sabr_stream.url == valid_live_url_with_source
-        assert sabr_stream.processor.is_live is True
+        assert sabr_stream.processor.is_broadcast is True
 
     def test_not_set_live_from_url_no_source(self, logger, client_info):
         valid_live_url_without_source = 'https://live.googlevideo.com/sabr?source=another_source&sabr=1'
@@ -848,7 +934,7 @@ class TestStream:
             url=valid_live_url_without_source,
         )
         assert sabr_stream.url == valid_live_url_without_source
-        assert sabr_stream.processor.is_live is False
+        assert sabr_stream.processor.is_broadcast is False
 
     def test_nonlive_ignore_broadcast_id_update(self, logger, client_info):
         # Should ignore broadcast_id updates in URL when non-live
@@ -858,9 +944,9 @@ class TestStream:
             url=VALID_SABR_URL + '&id=1',
         )
 
-        assert sabr_stream.processor.is_live is False
+        assert sabr_stream.processor.is_broadcast is False
         sabr_stream.url = VALID_SABR_URL + '&id=2'
-        assert sabr_stream.processor.is_live is False
+        assert sabr_stream.processor.is_broadcast is False
         assert sabr_stream.url == VALID_SABR_URL + '&id=2'
 
     @pytest.mark.parametrize('post_live', [True, False], ids=['post_live=True', 'post_live=False'])
@@ -873,7 +959,7 @@ class TestStream:
             post_live=post_live,
         )
 
-        assert sabr_stream.processor.is_live is True
+        assert sabr_stream.processor.is_broadcast is True
         with pytest.raises(BroadcastIdChanged, match=r'Broadcast ID changed from 1 to 2\.'):
             sabr_stream.url = 'https://live.googlevideo.com/sabr?sabr=1&source=yt_live_broadcast&id=xyz.2'
 
@@ -942,7 +1028,7 @@ class TestStream:
             MediaSegmentMismatchError,
             match=r'Segment sequence number mismatch for format FormatId\(itag=140, lmt=123, xtags=None\): expected 2, received 3',
         ) as exc_info:
-            list(sabr_stream.iter_parts())
+            collect_parts(sabr_stream)
 
         assert exc_info.value.expected_sequence_number == 2
         assert exc_info.value.received_sequence_number == 3
@@ -953,9 +1039,6 @@ class TestStream:
         # All responses should be closed
         assert all(request.response.closed for request in rh.request_history)
 
-    # TODO: should consider more tests where selectors are not matched / used
-    #  In particular, a test where audio+video selectors provided but only one format is returned
-    #  In this case, it should error (could be due to missing new segments due to not incrementing player time)
     def test_briefly_missing_initialized_format(self, logger, client_info):
         # Should not increment player_time_ms if one of the initialized formats is missing when the other has received a segment.
         # This can happen in the case we get first IF with a segment, then get a read error, then on next request is a redirect.
@@ -993,7 +1076,7 @@ class TestStream:
             sabr_response_processor=CustomAVProfile({'custom_parts_function': missing_format_func}),
         )
         # Should not error
-        parts = list(sabr_stream.iter_parts())
+        parts = collect_parts(sabr_stream)
 
         audio_selector, video_selector = selectors
 
@@ -1018,7 +1101,7 @@ class TestStream:
             MediaSegmentMismatchError,
             match=r'Segment sequence number mismatch for format FormatId\(itag=140, lmt=123, xtags=None\): expected 1, received 2',
         ) as exc_info:
-            list(sabr_stream.iter_parts())
+            collect_parts(sabr_stream)
 
         assert exc_info.value.expected_sequence_number == 1
         assert exc_info.value.received_sequence_number == 2
@@ -1100,7 +1183,7 @@ class TestStream:
         )
         audio_selector, video_selector = selectors
 
-        parts = list(sabr_stream.iter_parts())
+        parts = collect_parts(sabr_stream)
 
         skipped_audio_segments = 2
         skipped_video_segments = 4

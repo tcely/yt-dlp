@@ -1,11 +1,9 @@
 from __future__ import annotations
 
+
 from yt_dlp.utils import format_field, traverse_obj
 from yt_dlp.extractor.youtube._streaming.sabr.models import SabrLogger
 from yt_dlp.utils._utils import _YDLLogger
-
-# TODO: create a logger that logs to a file rather than the console.
-#  Might be useful for debugging SABR issues from users.
 
 
 class SabrFDLogger(SabrLogger):
@@ -22,11 +20,11 @@ class SabrFDLogger(SabrLogger):
         if self.log_level <= self.LogLevel.TRACE:
             self._ydl_logger.debug(self._format_msg('TRACE: ' + message))
 
-    def debug(self, message: str):
+    def debug(self, message: str, **_):
         if self.log_level <= self.LogLevel.DEBUG:
             self._ydl_logger.debug(self._format_msg(message))
 
-    def info(self, message: str):
+    def info(self, message: str, **_):
         if self.log_level <= self.LogLevel.INFO:
             self._ydl_logger.info(self._format_msg(message))
 
@@ -34,7 +32,7 @@ class SabrFDLogger(SabrLogger):
         if self.log_level <= self.LogLevel.WARNING:
             self._ydl_logger.warning(self._format_msg(message), once=once)
 
-    def error(self, message: str):
+    def error(self, message: str, **_):
         if self.log_level <= self.LogLevel.ERROR:
             self._ydl_logger.error(self._format_msg(message), is_error=False)
 

@@ -29,7 +29,7 @@ from .jsc.provider import JsChallengeRequest, JsChallengeType, NChallengeInput, 
 from .pot._director import initialize_pot_director
 from .pot.provider import PoTokenContext, PoTokenRequest
 from ...dependencies import protobug
-from ...networking.exceptions import HTTPError
+from ...networking import HEADRequest
 from ...utils import (
     NO_DEFAULT,
     ExtractorError,
@@ -142,49 +142,50 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
     _RETURN_TYPE = 'video'  # XXX: How to handle multifeed?
 
     _SUBTITLE_FORMATS = ('json3', 'srv1', 'srv2', 'srv3', 'ttml', 'srt', 'vtt')
-    _DEFAULT_CLIENTS = ('android_vr', 'web_safari')
-    _DEFAULT_JSLESS_CLIENTS = ('android_vr',)
-    _DEFAULT_AUTHED_CLIENTS = ('tv_downgraded', 'web_safari')
+    _DEFAULT_CLIENTS = ('visionos', 'web')
+    _DEFAULT_JSLESS_CLIENTS = ('visionos',)
+    _DEFAULT_AUTHED_CLIENTS = ('web_embedded', 'tv_downgraded', 'web')
     # Premium does not require POT (except for subtitles)
-    _DEFAULT_PREMIUM_CLIENTS = ('tv_downgraded', 'web_creator')
+    _DEFAULT_PREMIUM_CLIENTS = ('web_creator', 'tv_downgraded', 'web')
     _WEBPAGE_CLIENTS = ('web', 'web_safari')
-    _DEFAULT_WEBPAGE_CLIENT = 'web_safari'
+    _DEFAULT_WEBPAGE_CLIENT = 'web'
 
     _GEO_BYPASS = False
 
     IE_NAME = 'youtube'
     _TESTS = [{
-        'url': 'https://www.youtube.com/watch?v=BaW_jenozKc&t=1s&end=9',
+        'url': 'https://www.youtube.com/watch?v=YE7VzlLtp-4&t=1s&end=9',
         'info_dict': {
-            'id': 'BaW_jenozKc',
+            'id': 'YE7VzlLtp-4',
             'ext': 'mp4',
-            'title': 'youtube-dl test video "\'/\\ä↭𝕐',
-            'age_limit': 0,
-            'availability': 'public',
-            'categories': ['Science & Technology'],
-            'channel': 'Philipp Hagemeister',
+            'title': 'Big Buck Bunny',
+            'description': 'md5:e95316924b5eca2a74b87ab0b290724a',
+            'media_type': 'video',
+            'uploader': 'Blender',
+            'uploader_id': '@BlenderOfficial',
+            'uploader_url': 'https://www.youtube.com/@BlenderOfficial',
+            'channel': 'Blender',
+            'channel_id': 'UCSMOQeBJ2RAnuFungnQOxLg',
+            'channel_url': 'https://www.youtube.com/channel/UCSMOQeBJ2RAnuFungnQOxLg',
+            'channel_is_verified': True,
             'channel_follower_count': int,
-            'channel_id': 'UCLqxVugv74EIW3VWh2NOa3Q',
-            'channel_url': 'https://www.youtube.com/channel/UCLqxVugv74EIW3VWh2NOa3Q',
             'comment_count': int,
-            'description': 'md5:8fb536f4877b8a7455c2ec23794dbc22',
-            'duration': 10,
-            'end_time': 9,
-            'heatmap': 'count:100',
-            'like_count': int,
-            'live_status': 'not_live',
-            'playable_in_embed': True,
-            'start_time': 1,
-            'tags': 'count:1',
-            'thumbnail': r're:https?://i\.ytimg\.com/.+',
-            'timestamp': 1349198244,
-            'upload_date': '20121002',
-            'uploader': 'Philipp Hagemeister',
-            'uploader_id': '@PhilippHagemeister',
-            'uploader_url': 'https://www.youtube.com/@PhilippHagemeister',
             'view_count': int,
+            'like_count': int,
+            'age_limit': 0,
+            'duration': 597,
+            'thumbnail': 'https://i.ytimg.com/vi/YE7VzlLtp-4/maxresdefault.jpg',
+            'heatmap': 'count:100',
+            'start_time': 1.0,
+            'end_time': 9.0,
+            'categories': ['Film & Animation'],
+            'tags': 'count:16',
+            'timestamp': 1212060266,
+            'upload_date': '20080529',
+            'playable_in_embed': True,
+            'availability': 'public',
+            'live_status': 'not_live',
         },
-        'skip': 'Video unavailable',
     }, {
         'note': 'Embed-only video (#1746)',
         'url': '//www.YouTube.com/watch?v=yZIXLfi8CZQ',
@@ -199,35 +200,36 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         'skip': 'Private video',
     }, {
         'note': 'Use the first video ID in the URL',
-        'url': 'https://www.youtube.com/watch?v=BaW_jenozKc&v=yZIXLfi8CZQ',
+        'url': 'https://www.youtube.com/watch?v=YE7VzlLtp-4&v=BaW_jenozKc',
         'info_dict': {
-            'id': 'BaW_jenozKc',
+            'id': 'YE7VzlLtp-4',
             'ext': 'mp4',
-            'title': 'youtube-dl test video "\'/\\ä↭𝕐',
-            'age_limit': 0,
-            'availability': 'public',
-            'categories': ['Science & Technology'],
-            'channel': 'Philipp Hagemeister',
+            'title': 'Big Buck Bunny',
+            'description': 'md5:e95316924b5eca2a74b87ab0b290724a',
+            'media_type': 'video',
+            'uploader': 'Blender',
+            'uploader_id': '@BlenderOfficial',
+            'uploader_url': 'https://www.youtube.com/@BlenderOfficial',
+            'channel': 'Blender',
+            'channel_id': 'UCSMOQeBJ2RAnuFungnQOxLg',
+            'channel_url': 'https://www.youtube.com/channel/UCSMOQeBJ2RAnuFungnQOxLg',
+            'channel_is_verified': True,
             'channel_follower_count': int,
-            'channel_id': 'UCLqxVugv74EIW3VWh2NOa3Q',
-            'channel_url': 'https://www.youtube.com/channel/UCLqxVugv74EIW3VWh2NOa3Q',
             'comment_count': int,
-            'description': 'md5:8fb536f4877b8a7455c2ec23794dbc22',
-            'duration': 10,
-            'heatmap': 'count:100',
-            'like_count': int,
-            'live_status': 'not_live',
-            'playable_in_embed': True,
-            'tags': 'count:1',
-            'thumbnail': r're:https?://i\.ytimg\.com/.+',
-            'timestamp': 1349198244,
-            'upload_date': '20121002',
-            'uploader': 'Philipp Hagemeister',
-            'uploader_id': '@PhilippHagemeister',
-            'uploader_url': 'https://www.youtube.com/@PhilippHagemeister',
             'view_count': int,
+            'like_count': int,
+            'age_limit': 0,
+            'duration': 597,
+            'thumbnail': 'https://i.ytimg.com/vi/YE7VzlLtp-4/maxresdefault.jpg',
+            'heatmap': 'count:100',
+            'categories': ['Film & Animation'],
+            'tags': 'count:16',
+            'timestamp': 1212060266,
+            'upload_date': '20080529',
+            'playable_in_embed': True,
+            'availability': 'public',
+            'live_status': 'not_live',
         },
-        'skip': 'Video unavailable',
     }, {
         'note': '256k DASH audio (format 141) via DASH manifest',
         'url': 'https://www.youtube.com/watch?v=a9LDPn-MO4I',
@@ -825,10 +827,10 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         'url': 'sJL6WA-aGkQ',
         'only_matching': True,
     }, {
-        'url': 'https://invidio.us/watch?v=BaW_jenozKc',
+        'url': 'https://invidio.us/watch?v=YE7VzlLtp-4',
         'only_matching': True,
     }, {
-        'url': 'https://redirect.invidious.io/watch?v=BaW_jenozKc',
+        'url': 'https://redirect.invidious.io/watch?v=YE7VzlLtp-4',
         'only_matching': True,
     }, {
         # from https://nitter.pussthecat.org/YouTube/status/1360363141947944964#m
@@ -1600,13 +1602,13 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         'info_dict': {
             'id': 'brhfDfLdDZ8',
             'ext': 'mp4',
-            'title': 'This is the WORST Movie Science We\'ve Ever Seen',
+            'title': 'Scientists React to Terrible Movie Science | Moonfall (2021)',
             'description': 'md5:8afd0a3cd69ec63438fc573580436f92',
             'media_type': 'video',
-            'uploader': 'Open Sauce',
-            'uploader_id': '@opensaucelive',
-            'uploader_url': 'https://www.youtube.com/@opensaucelive',
-            'channel': 'Open Sauce',
+            'uploader': 'Sauce +',
+            'uploader_id': '@sauceplusofficial',
+            'uploader_url': 'https://www.youtube.com/@sauceplusofficial',
+            'channel': 'Sauce +',
             'channel_id': 'UC2EiGVmCeD79l_vZ204DUSw',
             'channel_url': 'https://www.youtube.com/channel/UC2EiGVmCeD79l_vZ204DUSw',
             'comment_count': int,
@@ -1614,15 +1616,17 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             'like_count': int,
             'age_limit': 0,
             'duration': 1664,
-            'thumbnail': 'https://i.ytimg.com/vi/brhfDfLdDZ8/hqdefault.jpg',
+            'thumbnail': 'https://i.ytimg.com/vi/brhfDfLdDZ8/sddefault.jpg',
             'categories': ['Entertainment'],
             'tags': ['Moonfall', 'Bad Science', 'Open Sauce', 'Sauce+', 'The Backyard Scientist', 'William Osman', 'Allen Pan'],
-            'creators': ['Open Sauce', 'William Osman 2'],
+            'creators': ['Sauce +', 'William Osman 2'],
             'timestamp': 1759452918,
             'upload_date': '20251003',
             'playable_in_embed': True,
             'availability': 'public',
             'live_status': 'not_live',
+            'channel_follower_count': int,
+            'heatmap': 'count:100',
         },
         'params': {'skip_download': True},
     }, {
@@ -1656,6 +1660,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             'playable_in_embed': True,
             'availability': 'public',
             'live_status': 'not_live',
+            'channel_follower_count': int,
         },
         'params': {'skip_download': True},
     }, {
@@ -1939,8 +1944,8 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
     def _prepare_live_from_start_formats(self, formats, video_id, live_start_time, url, webpage_url, smuggled_data, is_live):
         lock = threading.Lock()
         start_time = time.time()
-        # TODO: only include dash formats
         formats = [f for f in formats if f.get('is_from_start') and f.get('protocol') != 'sabr']
+        adaptive_last_seq_cache = {}
 
         def refetch_manifest(itag, client_name, delay):
             nonlocal formats, start_time, is_live
@@ -1957,9 +1962,9 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             is_live = live_status == 'is_live'
             start_time = time.time()
 
-        def mpd_feed(itag, client_name, delay):
+        def url_feed(itag, client_name, delay):
             """
-            @returns (manifest_url, manifest_stream_number, is_live) or None
+            @returns (base_url, is_live) or None
             """
             for retry in self.RetryManager(fatal=False):
                 with lock:
@@ -1970,32 +1975,38 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                     if not is_live:
                         retry.error = f'{video_id}: Video is no longer live'
                     else:
-                        retry.error = f'Cannot find refreshed manifest for format {itag}{bug_reports_message()}'
+                        retry.error = f'Cannot find refreshed url for format {itag}{bug_reports_message()}'
                     continue
 
-                # Formats from ended premieres will be missing a manifest_url
-                # See https://github.com/yt-dlp/yt-dlp/issues/8543
-                if not f.get('manifest_url'):
+                if not f.get('url'):
                     break
 
-                return f['manifest_url'], f['manifest_stream_number'], is_live
+                return f['url'], is_live
             return None
 
         for f in formats:
             f['is_live'] = is_live
-            gen = functools.partial(self._live_dash_fragments, video_id, f['_itag'], f['_client'],
-                                    live_start_time, mpd_feed, not is_live and f.copy())
+            gen = functools.partial(
+                self._live_adaptive_fragments,
+                video_id,
+                f['_itag'],
+                f['_client'],
+                live_start_time,
+                url_feed if is_live else None,
+                f.get('url') if not is_live else None,
+                f.get('target_duration'),
+                adaptive_last_seq_cache,
+            )
             if is_live:
                 f['fragments'] = gen
                 f['protocol'] = 'http_dash_segments_generator'
             else:
                 f['fragments'] = LazyList(gen({}))
+                f['protocol'] = 'http_dash_segments'
                 del f['is_from_start']
 
-    def _live_dash_fragments(self, video_id, itag, client_name, live_start_time, mpd_feed, manifestless_orig_fmt, ctx):
+    def _live_adaptive_fragments(self, video_id, itag, client_name, live_start_time, url_feed, base_url, fragment_duration, last_seq_cache, ctx):
         FETCH_SPAN, MAX_DURATION = 5, 432000
-
-        mpd_url, stream_number, is_live = None, None, True
 
         begin_index = 0
         download_start_time = ctx.get('start') or time.time()
@@ -2007,98 +2018,77 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                 'YouTube does not have data before that. If you think this is wrong,'), only_once=True)
             lack_early_segments = True
 
-        known_idx, no_fragment_score, last_segment_url = begin_index, 0, None
-        fragments, fragment_base_url = None, None
-
-        def _extract_sequence_from_mpd(refresh_sequence, immediate):
-            nonlocal mpd_url, stream_number, is_live, no_fragment_score, fragments, fragment_base_url
-            # Obtain from MPD's maximum seq value
-            old_mpd_url = mpd_url
-            last_error = ctx.pop('last_error', None)
-            expire_fast = immediate or (last_error and isinstance(last_error, HTTPError) and last_error.status == 403)
-            mpd_url, stream_number, is_live = (mpd_feed(itag, client_name, 5 if expire_fast else 18000)
-                                               or (mpd_url, stream_number, False))
-            if not refresh_sequence:
-                if expire_fast and not is_live:
-                    return False, last_seq
-                elif old_mpd_url == mpd_url:
-                    return True, last_seq
-            if manifestless_orig_fmt:
-                fmt_info = manifestless_orig_fmt
-            else:
-                try:
-                    fmts, _ = self._extract_mpd_formats_and_subtitles(
-                        mpd_url, None, note=False, errnote=False, fatal=False)
-                except ExtractorError:
-                    fmts = None
-                if not fmts:
-                    no_fragment_score += 2
-                    return False, last_seq
-                fmt_info = next(x for x in fmts if x['manifest_stream_number'] == stream_number)
-            fragments = fmt_info['fragments']
-            fragment_base_url = fmt_info['fragment_base_url']
-            assert fragment_base_url
-
-            _last_seq = int(re.search(r'(?:/|^)sq/(\d+)', fragments[-1]['path']).group(1))
-            return True, _last_seq
+        known_idx, no_fragment_score = begin_index, 0
 
         self.write_debug(f'[{video_id}] Generating fragments for format {itag}')
-        while is_live:
+        should_iterate = True
+        while should_iterate:
             fetch_time = time.time()
             if no_fragment_score > 30:
                 return
-            if last_segment_url:
-                # Obtain from "X-Head-Seqnum" header value from each segment
+
+            if url_feed and (feed_results := url_feed(itag, client_name, 5 if no_fragment_score > 15 else 18000)):
+                base_url, should_iterate = feed_results
+            else:
+                should_iterate = False
+            if not base_url:
+                no_fragment_score += 2
+                continue
+
+            # Obtain from "X-Head-Seqnum" header value. The bare base URL
+            # may return an empty response body, but the headers are still usable.
+            cache_key = should_iterate, int(time.time() // FETCH_SPAN)
+            if cache_key in last_seq_cache:
+                last_seq = last_seq_cache[cache_key]
+            else:
                 try:
                     urlh = self._request_webpage(
-                        last_segment_url, None, note=False, errnote=False, fatal=False)
-                except ExtractorError:
+                        HEADRequest(base_url), None,
+                        note=False, errnote='Fragment request failed')
+                except ExtractorError as e:
+                    self.write_debug(e.msg)
                     urlh = None
                 last_seq = try_get(urlh, lambda x: int_or_none(x.headers['X-Head-Seqnum']))
-                if last_seq is None:
-                    no_fragment_score += 2
-                    last_segment_url = None
-                    continue
-            else:
-                should_continue, last_seq = _extract_sequence_from_mpd(True, no_fragment_score > 15)
+                if urlh:
+                    urlh.close()
+                if last_seq is not None:
+                    last_seq_cache.clear()
+                    last_seq_cache[cache_key] = last_seq
+            if last_seq is None:
                 no_fragment_score += 2
-                if not should_continue:
-                    continue
+                continue
 
             if known_idx > last_seq:
-                last_segment_url = None
+                no_fragment_score += 5
+                if should_iterate:
+                    time.sleep(max(0, FETCH_SPAN + fetch_time - time.time()))
                 continue
 
             last_seq += 1
+
+            if not url_feed:
+                last_seq -= 2
 
             if begin_index < 0 and known_idx < 0:
                 # skip from the start when it's negative value
                 known_idx = last_seq + begin_index
             if lack_early_segments:
-                known_idx = max(known_idx, last_seq - int(MAX_DURATION // fragments[-1]['duration']))
-            try:
-                for idx in range(known_idx, last_seq):
-                    # do not update sequence here or you'll get skipped some part of it
-                    should_continue, _ = _extract_sequence_from_mpd(False, False)
-                    if not should_continue:
-                        known_idx = idx - 1
-                        raise ExtractorError('breaking out of outer loop')
-                    last_segment_url = urljoin(fragment_base_url, f'sq/{idx}')
-                    yield {
-                        'url': last_segment_url,
-                        'fragment_count': last_seq,
-                    }
-                if known_idx == last_seq:
-                    no_fragment_score += 5
-                else:
-                    no_fragment_score = 0
-                known_idx = last_seq
-            except ExtractorError:
-                continue
+                known_idx = max(known_idx, last_seq - int(MAX_DURATION // fragment_duration))
 
-            if manifestless_orig_fmt:
-                # Stop at the first iteration if running for post-live manifestless;
-                # fragment count no longer increase since it starts
+            for idx in range(known_idx, last_seq):
+                yield {
+                    'url': update_url_query(base_url, {'sq': str(idx)}),
+                    'fragment_count': last_seq,
+                }
+
+            if known_idx == last_seq:
+                no_fragment_score += 5
+            else:
+                no_fragment_score = 0
+            known_idx = last_seq
+
+            if not url_feed:
+                # Post-live: stop after first iteration
                 break
 
             time.sleep(max(0, FETCH_SPAN + fetch_time - time.time()))
@@ -2928,6 +2918,10 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
     def _is_unplayable(player_response):
         return traverse_obj(player_response, ('playabilityStatus', 'status')) == 'UNPLAYABLE'
 
+    @staticmethod
+    def _is_error_response(player_response):
+        return traverse_obj(player_response, ('playabilityStatus', 'status')) == 'ERROR'
+
     def _extract_player_response(self, client, video_id, webpage_ytcfg, player_ytcfg, player_url, initial_pr, visitor_data, data_sync_id, po_token, reload_playback_token):
         headers = self.generate_api_headers(
             ytcfg=player_ytcfg,
@@ -2986,19 +2980,14 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
 
     def _extract_heartbeat(self, *, client, video_id, webpage_ytcfg, player_ytcfg, initial_pr, visitor_data, data_sync_id, heartbeat_token, quiet=True):
         headers = self.generate_api_headers(
-            ytcfg=player_ytcfg,
-            default_client=client,
-            visitor_data=visitor_data,
+            ytcfg=player_ytcfg, default_client=client, visitor_data=visitor_data,
             session_index=self._extract_session_index(webpage_ytcfg, player_ytcfg),
             delegated_session_id=(
                 self._parse_data_sync_id(data_sync_id)[0]
-                or self._extract_delegated_session_id(webpage_ytcfg, initial_pr, player_ytcfg)
-            ),
+                or self._extract_delegated_session_id(webpage_ytcfg, initial_pr, player_ytcfg)),
             user_session_id=(
                 self._parse_data_sync_id(data_sync_id)[1]
-                or self._extract_user_session_id(webpage_ytcfg, initial_pr, player_ytcfg)
-            ),
-        )
+                or self._extract_user_session_id(webpage_ytcfg, initial_pr, player_ytcfg)))
 
         payload = {
             'videoId': video_id,
@@ -3190,8 +3179,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                     visitor_data=visitor_data,
                     data_sync_id=data_sync_id,
                     # Required for members-only streams
-                    heartbeat_token=traverse_obj(pr, ('heartbeatParams', 'heartbeatToken', {str})),
-                )
+                    heartbeat_token=traverse_obj(pr, ('heartbeatParams', 'heartbeatToken', {str})))
 
                 # Save client details for introspection later
                 innertube_context = traverse_obj(player_ytcfg or self._get_default_ytcfg(client), 'INNERTUBE_CONTEXT')
@@ -3215,13 +3203,15 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                     prs.append(pr)
 
             if (
-                # Is this a "made for kids" video that can't be downloaded with android_vr?
-                client == 'android_vr' and self._is_unplayable(pr)
+                # Is this a "made for kids" video that can't be downloaded with android_vr/visionos?
+                client in {'android_vr', 'visionos'}
+                and (self._is_unplayable(pr) or self._is_error_response(pr))
                 and webpage and 'made for kids' in webpage
                 # ...and is a JS runtime is available?
                 and any(p.is_available() for p in self._jsc_director.providers.values())
             ):
                 append_client('web_embedded')
+                append_client('tv_downgraded')
 
             # web_embedded can work around age-gate and age-verification for some embeddable videos
             if self._is_agegated(pr) and variant != 'web_embedded':
@@ -3259,10 +3249,9 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             raise ExtractorError('Failed to extract any player response')
         return prs, player_url
 
-    def _needs_live_processing(self, live_status, duration):
-        if ((live_status == 'is_live' and self.get_param('live_from_start'))
-                or (live_status == 'post_live' and (duration or 0) > 2 * 3600)):
-            return live_status
+    def _needs_live_processing(self, live_status):
+        return live_status == 'post_live' or (
+            live_status == 'is_live' and self.get_param('live_from_start'))
 
     def _report_pot_format_skipped(self, video_id, client_name, proto):
         msg = (
@@ -3314,6 +3303,23 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
 
         raise ExtractorError(f'No SABR formats found for client {client_name}', expected=True)
 
+    def parse_xtags(self, f_url=None, b64_xtags=None):
+        # Parses xtags into dictionary like {'sr': '1', 'drc': '1}
+        if f_url:
+            xtags = traverse_obj(f_url, ({parse_qs}, 'xtags', -1, {urllib.parse.parse_qsl}, {lambda x: dict(x)}))  # noqa: PLW0108
+            if xtags:
+                return xtags
+        if not protobug or not b64_xtags:
+            return {}
+        try:
+            from ._proto.innertube.xtags import XTags
+            # server sometimes strips padding which Python does not like
+            parsed_xtags = protobug.loads(base64.urlsafe_b64decode(f'{b64_xtags}=='), XTags)
+            return {tag.key: tag.value for tag in parsed_xtags.tags}
+        except Exception as e:
+            self.report_warning(f'Failed to parse xtags protobuf: {e!r}', only_once=True)
+            return {}
+
     def _extract_formats_and_subtitles(self, video_id, player_responses, player_url, live_status, duration):
         CHUNK_SIZE = 10 << 20
         ORIGINAL_LANG_VALUE = 10
@@ -3341,8 +3347,8 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             self._downloader.deprecated_feature('[youtube] include_duplicate_formats extractor argument is deprecated. '
                                                 'Use formats=duplicate extractor argument instead')
 
-        def is_super_resolution(f_url):
-            return '1' in traverse_obj(f_url, ({parse_qs}, 'xtags', ..., {urllib.parse.parse_qs}, 'sr', ...))
+        def is_super_resolution(f_url=None, b64_xtags=None):
+            return self.parse_xtags(f_url, b64_xtags).get('sr') == '1'
 
         def solve_sig(s, spec):
             return ''.join(s[i] for i in spec)
@@ -3491,7 +3497,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             def get_stream_id(fmt_stream):
                 return str_or_none(fmt_stream.get('itag')), traverse_obj(fmt_stream, 'audioTrack', 'id'), fmt_stream.get('isDrc')
 
-            def process_format_stream(fmt_stream, proto, missing_pot, super_resolution=False):
+            def process_format_stream(fmt_stream, proto, missing_pot, super_resolution=False, is_broken=False):
                 itag = str_or_none(fmt_stream.get('itag'))
                 audio_track = fmt_stream.get('audioTrack') or {}
                 quality = fmt_stream.get('quality')
@@ -3537,7 +3543,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                     self._report_pot_format_skipped(video_id, client_name, proto)
                     return None
 
-                name = fmt_stream.get('qualityLabel') or quality.replace('audio_quality_', '') or ''
+                name = fmt_stream.get('qualityLabel') or (quality or '').replace('audio_quality_', '')
                 fps = int_or_none(fmt_stream.get('fps')) or 0
                 dct = {
                     'asr': int_or_none(fmt_stream.get('audioSampleRate')),
@@ -3545,13 +3551,14 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                     'format_id': join_nonempty(itag, (
                         'drc' if fmt_stream.get('isDrc')
                         else 'sr' if super_resolution
+                        else 'vb' if fmt_stream.get('isVb')
                         else None)),
                     'format_note': join_nonempty(
                         join_nonempty(audio_track.get('displayName'), audio_track.get('audioIsDefault') and '(default)', delim=' '),
-                        name, fmt_stream.get('isDrc') and 'DRC', super_resolution and 'AI-upscaled',
+                        name, fmt_stream.get('isDrc') and 'DRC', super_resolution and 'AI-upscaled', fmt_stream.get('isVb') and 'AI-voice boosted',
                         try_get(fmt_stream, lambda x: x['projectionType'].replace('RECTANGULAR', '').lower()),
                         try_get(fmt_stream, lambda x: x['spatialAudioType'].replace('SPATIAL_AUDIO_TYPE_', '').lower()),
-                        is_damaged and 'DAMAGED', missing_pot and 'MISSING POT',
+                        is_damaged and 'DAMAGED', missing_pot and 'MISSING POT', is_broken and 'BROKEN',
                         (self.get_param('verbose') or all_formats) and short_client_name(client_name),
                         delim=', '),
                     # Format 22 is likely to be damaged. See https://github.com/yt-dlp/yt-dlp/issues/3372
@@ -3566,8 +3573,8 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                     'width': int_or_none(fmt_stream.get('width')),
                     'language': language_code,
                     'language_preference': language_preference,
-                    # Strictly de-prioritize damaged and 3gp formats
-                    'preference': -10 if is_damaged else -2 if itag == '17' else None,
+                    # Strictly de-prioritize broken and damaged and 3gp formats
+                    'preference': -20 if is_broken else -10 if is_damaged else -2 if itag == '17' else None,
                 }
                 mime_mobj = re.match(
                     r'((?:[^/]+)/(?:[^;]+))(?:;\s*codecs="([^"]+)")?', fmt_stream.get('mimeType') or '')
@@ -3586,8 +3593,14 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                 https_fmts = []
 
                 for fmt_stream in streaming_formats:
-                    # Live adaptive https formats are not supported: skip unless extractor-arg given
-                    if fmt_stream.get('targetDurationSec') and skip_bad_formats:
+                    if (
+                        # It's a live adaptive format
+                        fmt_stream.get('targetDurationSec')
+                        # The user didn't pass the formats=incomplete extractor-arg
+                        and skip_bad_formats
+                        # This is not a --live-from-start or post-live stream
+                        and not self._needs_live_processing(live_status)
+                    ):
                         continue
 
                     # FORMAT_STREAM_TYPE_OTF(otf=1) requires downloading the init fragment
@@ -3673,6 +3686,12 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                     if live_status not in ('is_live', 'post_live'):
                         fmt['available_at'] = available_at
 
+                    if fmt_stream.get('targetDurationSec') and self._needs_live_processing(live_status):
+                        fmt['is_from_start'] = True
+                        fmt['target_duration'] = fmt_stream['targetDurationSec']
+                        fmt['_itag'] = stream_id[0]
+                        fmt['_client'] = client_name
+
                     https_fmts.append(fmt)
 
                 for fmt in https_fmts:
@@ -3687,11 +3706,22 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                         fmt['downloader_options'] = {'http_chunk_size': CHUNK_SIZE}
                         yield fmt
 
-            def process_sabr_formats_and_subtitles():
+            def process_sabr_formats():
                 proto = 'sabr'
                 server_abr_streaming_url = streaming_data.get('serverAbrStreamingUrl')
                 if not server_abr_streaming_url:
                     return
+
+                if protobug is None:
+                    self.report_warning(
+                        f'{video_id}: {client_name} client {proto} formats will be skipped as protobug is not installed',
+                        only_once=True)
+                    return
+
+                # TODO: enable this gate upon merge
+                if False and 'sabr_live' not in self._configuration_arg('formats') and live_status in ('is_live', 'post_live'):
+                    return
+
                 # web_creator client sometimes serves the url on c.youtube.com - SABR downloader only support googlevideo.com.
                 server_abr_streaming_url = server_abr_streaming_url.replace('.c.youtube.com/videoplayback', '.googlevideo.com/videoplayback')
                 query = parse_qs(server_abr_streaming_url)
@@ -3711,12 +3741,6 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                     pr, ('playerConfig', 'mediaCommonConfig', 'mediaUstreamerRequestConfig', 'videoPlaybackUstreamerConfig'))
 
                 if not server_abr_streaming_url or not video_playback_ustreamer_config:
-                    return
-
-                if protobug is None:
-                    self.report_warning(
-                        f'{video_id}: {client_name} client {proto} formats will be skipped as protobug is not installed',
-                        only_once=True)
                     return
 
                 pot_policy: GvsPoTokenPolicy = self._get_default_ytcfg(client_name)['GVS_PO_TOKEN_POLICY'][StreamingProtocol.SABR]
@@ -3739,7 +3763,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                         'os_name': 'osName',
                         'device_model': 'deviceModel',
                         'device_make': 'deviceMake',
-                    }))
+                        'android_sdk_version': 'androidSdkVersion'}))
 
                 sabr_config = {
                     'video_playback_ustreamer_config': video_playback_ustreamer_config,
@@ -3759,11 +3783,34 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                         if stream_id in stream_ids:
                             continue
 
-                    fmt = process_format_stream(fmt_stream, proto, missing_pot=require_po_token and not po_token)
+                    xtags = fmt_stream.get('xtags')
+                    is_broken = False
+                    if (
+                       ((fmt_stream.get('qualityOrdinal') or '').endswith('_SAVER')
+                        or fmt_stream.get('audioQuality') == 'AUDIO_QUALITY_ULTRALOW')
+                       and client_name in ('android', 'android_vr', 'ios')
+                       ):
+                        # These formats are broken for SABR on these clients.
+                        # Probably requires some extra information in the sabr request to enable them.
+                        is_broken = True
+
+                    if is_broken and skip_bad_formats:
+                        continue
+
+                    fmt = process_format_stream(
+                        fmt_stream, proto, missing_pot=require_po_token and not po_token,
+                        super_resolution=is_super_resolution(b64_xtags=xtags), is_broken=is_broken)
                     if not fmt:
                         continue
 
-                    caption_track = fmt_stream.get('captionTrack')
+                    if fmt.get('acodec') != 'none' and fmt.get('vcodec') != 'none':
+                        # SABR does not support combined formats
+                        continue
+
+                    # TODO(future): extract SABR live caption tracks.
+                    # (the SABR downloader supports these, just need to support extraction)
+                    if fmt_stream.get('captionTrack'):
+                        continue
 
                     fmt.update({
                         'is_from_start': live_status == 'is_live' and self.get_param('live_from_start'),
@@ -3774,34 +3821,30 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                     fmt['_sabr_config'] = {
                         **sabr_config,
                         'itag': stream_id[0],
-                        'xtags': fmt_stream.get('xtags'),
+                        'xtags': xtags,
                         'last_modified': fmt_stream.get('lastModified'),
                         'target_duration_sec': fmt_stream.get('targetDurationSec'),
                     }
 
-                    single_stream = 'none' in (fmt.get('acodec'), fmt.get('vcodec'))
+                    if stream_id[0]:
+                        itags[stream_id[0]].add((proto, fmt.get('language')))
+                        stream_ids.append(stream_id)
 
-                    nonlocal subtitles
-                    if caption_track:
-                        # TODO: proper live subtitle extraction
-                        subtitles = self._merge_subtitles({str(stream_id[0]): [fmt]}, subtitles)
-                    elif single_stream:
-                        if stream_id[0]:
-                            itags[stream_id[0]].add((proto, fmt.get('language')))
-                            stream_ids.append(stream_id)
-                        yield fmt
+                    yield fmt
 
             yield from process_https_formats()
-            yield from process_sabr_formats_and_subtitles()
+            yield from process_sabr_formats()
 
-            needs_live_processing = self._needs_live_processing(live_status, duration)
+            needs_live_processing = self._needs_live_processing(live_status)
 
             skip_manifests = set(self._configuration_arg('skip'))
-            if (needs_live_processing == 'is_live'  # These will be filtered out by YoutubeDL anyway
-                    or (needs_live_processing and skip_bad_formats)):
+            if needs_live_processing and skip_bad_formats:
                 skip_manifests.add('hls')
 
-            if skip_bad_formats and live_status == 'is_live' and needs_live_processing != 'is_live':
+            if skip_bad_formats and (
+                live_status == 'is_live'
+                or (live_status == 'post_live' and (duration or 0) > 2 * 3600)
+            ):
                 skip_manifests.add('dash')
 
             def process_manifest_format(f, proto, client_name, itag, missing_pot):
@@ -3939,10 +3982,6 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                         if process_manifest_format(f, 'dash', client_name, format_id, require_po_token and not po_token):
                             f['filesize'] = int_or_none(self._search_regex(
                                 r'/clen/(\d+)', f.get('fragment_base_url') or f['url'], 'file size', default=None))
-                            if needs_live_processing:
-                                f['is_from_start'] = True
-                                f['_itag'] = format_id
-                                f['_client'] = client_name
                             yield f
         yield subtitles
 
@@ -4006,11 +4045,20 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         wait_seconds = 0
 
         for renderer in traverse_obj(player_response, (
-            'adSlots', lambda _, v: v['adSlotRenderer']['adSlotMetadata']['triggerEvent'] == 'SLOT_TRIGGER_EVENT_BEFORE_CONTENT',
-            'adSlotRenderer', 'fulfillmentContent', 'fulfilledLayout', 'playerBytesAdLayoutRenderer', 'renderingContent', (
-                None,
-                ('playerBytesSequentialLayoutRenderer', 'sequentialLayouts', ..., 'playerBytesAdLayoutRenderer', 'renderingContent'),
-            ), 'instreamVideoAdRenderer', {dict},
+            (
+                (
+                    'adPlacements', lambda _, v: v['adPlacementRenderer']['config']['adPlacementConfig']['kind'] == 'AD_PLACEMENT_KIND_START',
+                    'adPlacementRenderer', 'renderer',
+                ),
+                (
+                    'adSlots', lambda _, v: v['adSlotRenderer']['adSlotMetadata']['triggerEvent'] == 'SLOT_TRIGGER_EVENT_BEFORE_CONTENT',
+                    'adSlotRenderer', 'fulfillmentContent', 'fulfilledLayout', 'playerBytesAdLayoutRenderer', 'renderingContent', (
+                        None,
+                        ('playerBytesSequentialLayoutRenderer', 'sequentialLayouts', ..., 'playerBytesAdLayoutRenderer', 'renderingContent'),
+                    ),
+                ),
+            ),
+            'instreamVideoAdRenderer', {dict},
         )):
             duration = traverse_obj(renderer, ('playerVars', {urllib.parse.parse_qs}, 'length_seconds', -1, {int_or_none}))
             ad = 'an ad' if duration is None else f'a {duration}s ad'
@@ -4305,7 +4353,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         if not duration and live_end_time and live_start_time:
             duration = live_end_time - live_start_time
 
-        needs_live_processing = self._needs_live_processing(live_status, duration)
+        needs_live_processing = self._needs_live_processing(live_status)
 
         def adjust_incomplete_format(fmt, note_suffix='(Last 2 hours)', pref_adjustment=-10):
             fmt['preference'] = (fmt.get('preference') or -1) + pref_adjustment
@@ -4317,25 +4365,18 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                 protocol = fmt.get('protocol')
                 if protocol == 'sabr':
                     continue
-                # Currently, protocol isn't set for adaptive https formats, but this could change
-                is_adaptive = protocol in (None, 'http', 'https')
-                if live_status == 'post_live' and is_adaptive:
-                    # Post-live adaptive formats cause HttpFD to raise "Did not get any data blocks"
-                    # These formats are *only* useful to external applications, so we can hide them
-                    # Set their preference <= -1000 so that FormatSorter flags them as 'hidden'
-                    adjust_incomplete_format(fmt, note_suffix='(ended)', pref_adjustment=-5000)
-                # Is it live with --live-from-start? Or is it post-live and its duration is >2hrs?
-                elif needs_live_processing:
+                # Is it live with --live-from-start or post-live?
+                if needs_live_processing:
                     if not fmt.get('is_from_start'):
-                        # Post-live m3u8 formats for >2hr streams
+                        # Post-live DASH and m3u8 manifests only have the last ~2 hours
                         adjust_incomplete_format(fmt)
                 elif live_status == 'is_live':
-                    if protocol == 'http_dash_segments':
-                        # Live DASH formats without --live-from-start
-                        adjust_incomplete_format(fmt)
-                    elif is_adaptive:
-                        # Incomplete live adaptive https formats
+                    # Currently, protocol isn't set for incomplete (non-generated) live adaptive formats
+                    if protocol in (None, 'http', 'https'):
                         adjust_incomplete_format(fmt, note_suffix='(incomplete)', pref_adjustment=-20)
+                    # Live DASH formats (no longer properly supported)
+                    elif protocol == 'http_dash_segments':
+                        adjust_incomplete_format(fmt)
 
         if needs_live_processing:
             self._prepare_live_from_start_formats(
@@ -4552,7 +4593,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                     if not release_year:
                         release_year = release_date[:4]
                 info.update({
-                    'album': mobj.group('album'.strip()),
+                    'album': mobj.group('album').strip(),
                     'artists': ([a] if (a := mobj.group('clean_artist'))
                                 else [a.strip() for a in mobj.group('artist').split(' · ')]),
                     'track': mobj.group('track').strip(),
@@ -4653,13 +4694,16 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         vsir = get_first(contents, 'videoSecondaryInfoRenderer')
         if vsir:
             vor = traverse_obj(vsir, ('owner', 'videoOwnerRenderer'))
-            collaborators = traverse_obj(vor, (
+            collab_view_models = traverse_obj(vor, (
                 'attributedTitle', 'commandRuns', ..., 'onTap', 'innertubeCommand', 'showDialogCommand',
                 'panelLoadingStrategy', 'inlineContent', 'dialogViewModel', 'customContent', 'listViewModel',
-                'listItems', ..., 'listItemViewModel', 'title', 'content', {str}))
+                'listItems', ..., 'listItemViewModel', {dict}))
+            collaborators = traverse_obj(collab_view_models, (..., 'title', 'content', {str}))
             info.update({
                 'channel': self._get_text(vor, 'title') or (collaborators[0] if collaborators else None),
-                'channel_follower_count': self._get_count(vor, 'subscriberCountText'),
+                'channel_follower_count': (
+                    self._get_count(vor, 'subscriberCountText')
+                    or traverse_obj(collab_view_models, (0, 'rendererContext', 'accessibilityContext', 'label', {parse_count}))),
                 'creators': collaborators if collaborators else None,
             })
 

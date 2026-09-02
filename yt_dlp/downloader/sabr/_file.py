@@ -7,6 +7,9 @@ from pathlib import Path
 from yt_dlp.utils import DownloadError
 from ._io import DiskFormatIOBackend, MemoryFormatIOBackend, ProxiedIOBackend
 
+DEFAULT_MAX_TRACKING_SEGMENTS = 2
+DEFAULT_SEGMENT_MEMORY_FILE_LIMIT = (1024 * 1024) * 2  # MiB
+
 
 @dataclasses.dataclass
 class Segment:
@@ -26,8 +29,20 @@ class Sequence:
     # The segments may not have a start byte range, so to keep it simple we will track
     # length of the sequence. We can infer from this and the segment's content_length where they should end and begin.
     sequence_content_length: int = 0
-    first_segment: Segment | None = None
-    last_segment: Segment | None = None
+    first_segments: list[Segment] = dataclasses.field(default_factory=list)
+    last_segments: list[Segment] = dataclasses.field(default_factory=list)
+
+    @property
+    def first_segment(self):
+        if not self.first_segments:
+            return None
+        return self.first_segments[0]
+
+    @property
+    def last_segment(self):
+        if not self.last_segments:
+            return None
+        return self.last_segments[-1]
 
 
 @dataclasses.dataclass
@@ -40,18 +55,30 @@ class RecoveryPackage:
 
 
 class SequenceFile:
+    """Sequence file containing consecutive segments
 
-    def __init__(self, fd, format_filename, sequence: Sequence, resume=False, max_segments=None, segment_memory_file_limit=None):
+    @param fd: FileDownloader instance
+    @param format_filename: Base format filename used to construct sequence and segment filenames.
+    @param sequence: Sequence object containing sequence metadata.
+    @param resume: If True, attempt to resume writing to an existing sequence file. Segment files are always overwritten.
+    @param max_segments: Optional maximum number of segments allowed in the sequence file.
+    @param segment_memory_file_limit: Optional threshold in bytes under which a segment is stored in memory.
+    @param max_tracking_segments: Optional maximum number of first and last segments to keep for state tracking.
+    """
+
+    def __init__(
+        self, fd, format_filename, sequence: Sequence,
+        resume=False, max_segments=None, segment_memory_file_limit=None, max_tracking_segments=None,
+    ):
         self.fd = fd
         self.format_filename = format_filename
         self.sequence = sequence
         self.file = DiskFormatIOBackend(
-            fd=self.fd,
-            filename=self.format_filename + f'.sq{self.sequence_id}.part',
-        )
+            fd=self.fd, filename=self.format_filename + f'.sq{self.sequence_id}.part')
         self.current_segment: SegmentFile | None = None
         self.resume = resume
         self.max_segments = max_segments
+        self.max_tracking_segments = max(1, max_tracking_segments or DEFAULT_MAX_TRACKING_SEGMENTS)
         self.segment_memory_file_limit = segment_memory_file_limit
 
         sequence_file_exists = self.file.exists()
@@ -59,13 +86,15 @@ class SequenceFile:
         if not resume and sequence_file_exists:
             self.file.remove()
 
-        elif not self.sequence.last_segment and sequence_file_exists:
+        elif not self.sequence.last_segments and sequence_file_exists:
             self.file.remove()
 
-        if self.sequence.last_segment and not sequence_file_exists:
+        if self.sequence.last_segments and not sequence_file_exists:
             raise DownloadError(f'Cannot find existing sequence {self.sequence_id} file')
 
-        if self.sequence.last_segment and not self.file.validate_length(self.sequence.sequence_content_length):
+        # TODO(future): support basic recovery for when sequence is longer than expected.
+        #  this can happen if the download was stopped before the state file could be updated.
+        if self.sequence.last_segments and not self.file.validate_length(self.sequence.sequence_content_length):
             self.file.remove()
             raise DownloadError(f'Existing sequence {self.sequence_id} file is not valid; removing')
 
@@ -114,11 +143,8 @@ class SequenceFile:
             self.current_segment.close()
 
         self.current_segment = SegmentFile(
-            fd=self.fd,
-            format_filename=self.format_filename,
-            segment=segment,
-            memory_file_limit=self.segment_memory_file_limit,
-        )
+            fd=self.fd, format_filename=self.format_filename,
+            segment=segment, memory_file_limit=self.segment_memory_file_limit)
 
     def write_segment_data(self, data, segment_id: str):
         if not self.is_current_segment(segment_id):
@@ -133,7 +159,7 @@ class SequenceFile:
         self.current_segment.finish_write()
 
         if (
-            self.current_segment.segment.content_length
+            self.current_segment.segment.content_length is not None
             and not self.current_segment.segment.content_length_estimated
             and self.current_segment.current_length != self.current_segment.segment.content_length
         ):
@@ -144,10 +170,13 @@ class SequenceFile:
         self.current_segment.segment.content_length = self.current_segment.current_length
         self.current_segment.segment.content_length_estimated = False
 
-        if not self.sequence.first_segment:
-            self.sequence.first_segment = self.current_segment.segment
+        if len(self.sequence.first_segments) < self.max_tracking_segments:
+            self.sequence.first_segments.append(self.current_segment.segment)
 
-        self.sequence.last_segment = self.current_segment.segment
+        self.sequence.last_segments.append(self.current_segment.segment)
+        while len(self.sequence.last_segments) > self.max_tracking_segments:
+            self.sequence.last_segments.pop(0)
+
         self.sequence.sequence_content_length += self.current_segment.current_length
 
         if not self.file.mode:
@@ -184,21 +213,24 @@ class SegmentFile:
         self.fd = fd
         self.format_filename = format_filename
         self.segment: Segment = segment
-        self._cumulative_hasher = hashlib.sha256()
         self._diverted_packages = list()
+        self._packages = collections.deque(maxlen=8)
+
+        if memory_file_limit is None:
+            memory_file_limit = DEFAULT_SEGMENT_MEMORY_FILE_LIMIT
+        self.memory_file_limit = memory_file_limit
+
+        self._reset()
+
+    def _reset(self):
+        self._cumulative_hasher = hashlib.sha256()
         self._expected_position = 0
         self._is_diverted = False
         self._known_good_position = 0
         # Initialize to the hash of an empty stream to start the chain
         self._known_good_checksum = self._cumulative_hasher.hexdigest()
-        self._packages = collections.deque(maxlen=8)
 
-        if memory_file_limit is None:
-            self.memory_file_limit = 2 * 1024 * 1024  # Default to 2 MB
-        else:
-            self.memory_file_limit = memory_file_limit
-
-        filename = format_filename + f'.sg{segment.segment_id}.part'
+        filename = self.format_filename + f'.sg{self.segment.segment_id}.part'
         # Store the segment in memory first
         # After writing more than the limit, then promote it to disk
         self.file = MemoryFormatIOBackend(
@@ -228,6 +260,14 @@ class SegmentFile:
             return disk_size
         return self._known_good_position + sum(p.length for p in self._diverted_packages)
 
+    @current_length.setter
+    def current_length(self, value):
+        if 0 == value:
+            self.remove()
+            self._reset()
+        # otherwise ignore the requested value
+        return self.current_length
+
     @property
     def segment_id(self):
         return self.segment.segment_id
@@ -246,7 +286,7 @@ class SegmentFile:
                 self.file.initialize_writer(resume=False)
 
             # Use append() when available
-            if hasattr(self.file, 'append') and callable(self.file.append):
+            if callable(getattr(self.file, 'append', None)):
                 self.file.append(package.backend)
             else:
                 package.backend.initialize_reader()
